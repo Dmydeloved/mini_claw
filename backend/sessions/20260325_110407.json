@@ -1,0 +1,26 @@
+[
+  {
+    "role": "user",
+    "content": "你好",
+    "timestamp": "2026-03-25T11:04:08.553690",
+    "tool_calls": null
+  },
+  {
+    "role": "assistant",
+    "content": "Error: Error code: 403 - {'error': {'message': '当前分组 [default, claude_cc, claude_kiro_vip, claude_kiro, claude, gemini, qwen, codex, gf] 下对于模型 openai/gpt-4.1-mini 暂无可用渠道，请确认该分组是否支持该模型 (request id: 2026032511040857422352390154605)', 'type': 'v_api_error'}}",
+    "timestamp": "2026-03-25T11:04:08.553690",
+    "tool_calls": null
+  },
+  {
+    "role": "user",
+    "content": "你好",
+    "timestamp": "2026-03-25T11:07:07.787155",
+    "tool_calls": null
+  },
+  {
+    "role": "assistant",
+    "content": "Error: Connection error.",
+    "timestamp": "2026-03-25T11:07:07.787155",
+    "tool_calls": null
+  }
+]
