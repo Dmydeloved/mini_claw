@@ -6,18 +6,20 @@ Handles workspace files, MEMORY.md, daily logs, and session management.
 import json
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
 class Message:
     """Represents a single message in conversation"""
 
-    role: str  # 'user' or 'assistant'
+    role: str  # 'user', 'assistant', or 'tool'
     content: str
     timestamp: str
     tool_calls: Optional[List[Dict]] = None
+    name: Optional[str] = None
+    tool_call_id: Optional[str] = None
 
 
 class MemoryManager:
@@ -91,12 +93,13 @@ This memory is automatically updated by the Agent after conversations.
             "AGENTS.md": """# 操作指南
 
 ## 技能调用协议 (SKILL PROTOCOL)
-你拥有一个技能列表 (SKILLS_SNAPSHOT)，其中列出了你可以使用的能力及其定义文件的位置。
+Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，不会直接注入 skill 的完整正文。
 当你要使用某个技能时，必须严格遵守以下步骤：
 
-1. 你的第一步行动永远是使用 `read_file` 工具读取该技能对应的 `location` 路径下的 Markdown 文件。
-2. 仔细阅读文件中的内容、步骤和示例。
-3. 根据文件中的指示，结合你内置的 Core Tools (`terminal`, `python_repl`, `fetch_url`) 来执行具体任务。
+1. 你的第一步行动永远是先使用 `read_file` 读取 `workspace/SKILLS_SNAPSHOT.md`，找到目标 skill 的真实文件位置。
+2. 然后再使用 `read_file` 读取对应的 `SKILL.md` Markdown 文件。
+3. 仔细阅读文件中的内容、步骤和示例。
+4. 根据文件中的指示，结合你内置的 Core Tools (`terminal`, `python_repl`, `fetch_url`) 来执行具体任务。
 
 禁止直接猜测技能的参数或用法，必须先读取文件。
 
@@ -150,7 +153,13 @@ This memory is automatically updated by the Agent after conversations.
         log_content = f"\n\n---\n\n## Conversation at {datetime.now().strftime('%H:%M:%S')}\n\n"
 
         for msg in conversation:
-            role_label = "User" if msg.role == "user" else "Assistant"
+            role_label = {
+                "user": "User",
+                "assistant": "Assistant",
+                "tool": "Tool",
+            }.get(msg.role, msg.role.title())
+            if msg.role == "tool" and msg.name:
+                role_label = f"Tool `{msg.name}`"
             log_content += f"**{role_label}**: {msg.content}\n\n"
 
             if msg.tool_calls:
@@ -203,7 +212,7 @@ This memory is automatically updated by the Agent after conversations.
 
         return session_id
 
-    def save_raw_messages(self, session_id: str, messages: List[Dict[str, str]]):
+    def save_raw_messages(self, session_id: str, messages: List[Dict[str, Any]]):
         """Persist the exact prompt payload sent to the chat model."""
         raw_messages_file = os.path.join(self.raw_messages_dir, f"{session_id}.json")
 
@@ -279,15 +288,11 @@ This memory is automatically updated by the Agent after conversations.
         logs_content = []
 
         for i in range(days):
-            date = datetime.now()
-            # Simple approach: just get today's log
-            if i == 0:
-                log_file = os.path.join(
-                    self.logs_dir, date.strftime("%Y-%m-%d") + ".md"
-                )
-                if os.path.exists(log_file):
-                    with open(log_file, "r", encoding="utf-8") as f:
-                        logs_content.append(f.read())
+            date = datetime.now() - timedelta(days=i)
+            log_file = os.path.join(self.logs_dir, date.strftime("%Y-%m-%d") + ".md")
+            if os.path.exists(log_file):
+                with open(log_file, "r", encoding="utf-8") as f:
+                    logs_content.append(f"# {date.strftime('%Y-%m-%d')}\n\n{f.read()}")
 
         return "\n\n".join(logs_content) if logs_content else "No recent logs."
 

@@ -1,12 +1,13 @@
 # 操作指南
 
 ## 技能调用协议 (SKILL PROTOCOL)
-你拥有一个技能列表 (SKILLS_SNAPSHOT)，其中列出了你可以使用的能力及其定义文件的位置。
+Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，不会直接注入 skill 的完整正文。
 当你要使用某个技能时，必须严格遵守以下步骤：
 
-1. 你的第一步行动永远是使用 `read_file` 工具读取该技能对应的 `location` 路径下的 Markdown 文件。
-2. 仔细阅读文件中的内容、步骤和示例。
-3. 根据文件中的指示，结合你内置的 Core Tools (`terminal`, `python_repl`, `fetch_url`) 来执行具体任务。
+1. 你的第一步行动永远是先使用 `read_file` 读取 `workspace/SKILLS_SNAPSHOT.md`，找到目标 skill 的真实文件位置。
+2. 然后再使用 `read_file` 读取对应的 `SKILL.md` Markdown 文件。
+3. 仔细阅读文件中的内容、步骤和示例。
+4. 根据文件中的指示，结合你内置的 Core Tools (`terminal`, `python_repl`, `fetch_url`) 来执行具体任务。
 
 禁止直接猜测技能的参数或用法，必须先读取文件。
 
