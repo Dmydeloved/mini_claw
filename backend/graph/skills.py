@@ -195,16 +195,7 @@ class SkillManager:
         Returns:
             Formatted string listing all skills
         """
-        enabled_skills = self.get_enabled_skills()
-
-        if not enabled_skills:
-            return "No skills currently available."
-
-        summary_lines = ["Available Skills:"]
-        for skill in enabled_skills:
-            summary_lines.append(f"- {skill.name}: {skill.description}")
-
-        return "\n".join(summary_lines)
+        return self.build_skills_prompt()
 
     def build_skills_snapshot(self) -> str:
         """Generate the SKILLS_SNAPSHOT.md content used in the system prompt."""

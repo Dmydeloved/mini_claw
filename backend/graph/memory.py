@@ -144,6 +144,36 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
 
         self.update_memory(updated_memory)
 
+    def _truncate_text(self, text: str, max_chars: int = 1200) -> str:
+        """Trim oversized log snippets to keep memory files readable."""
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "\n...[truncated]"
+
+    def _summarize_message_for_log(self, msg: Message) -> str:
+        """Summarize verbose message content before writing it to the daily log."""
+        content = msg.content or ""
+
+        if msg.role != "tool":
+            return self._truncate_text(content, max_chars=1500)
+
+        tool_name = msg.name or (msg.tool_calls[0].get("name") if msg.tool_calls else "tool")
+        tool_args = msg.tool_calls[0].get("args", {}) if msg.tool_calls else {}
+
+        if tool_name == "read_file":
+            file_path = str(tool_args.get("file_path", ""))
+            return f"Read file `{file_path}`.\n{self._truncate_text(content, max_chars=1000)}"
+
+        if tool_name == "fetch_url":
+            url = str(tool_args.get("url", ""))
+            return f"Fetched `{url}`.\n{self._truncate_text(content, max_chars=1000)}"
+
+        if tool_name == "write_file":
+            file_path = str(tool_args.get("file_path", ""))
+            return f"Wrote file `{file_path}`.\n{self._truncate_text(content, max_chars=600)}"
+
+        return self._truncate_text(content, max_chars=1000)
+
     def save_to_daily_log(self, conversation: List[Message]):
         """Save conversation to today's daily log"""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -160,7 +190,7 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
             }.get(msg.role, msg.role.title())
             if msg.role == "tool" and msg.name:
                 role_label = f"Tool `{msg.name}`"
-            log_content += f"**{role_label}**: {msg.content}\n\n"
+            log_content += f"**{role_label}**: {self._summarize_message_for_log(msg)}\n\n"
 
             if msg.tool_calls:
                 log_content += "**Tool Calls**:\n"
@@ -212,7 +242,12 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
 
         return session_id
 
-    def save_raw_messages(self, session_id: str, messages: List[Dict[str, Any]]):
+    def save_raw_messages(
+        self,
+        session_id: str,
+        messages: List[Dict[str, Any]],
+        prompt_preview: Optional[Dict[str, Any]] = None,
+    ):
         """Persist the exact prompt payload sent to the chat model."""
         raw_messages_file = os.path.join(self.raw_messages_dir, f"{session_id}.json")
 
@@ -221,6 +256,7 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
             "updated_at": datetime.now().isoformat(),
             "message_count": len(messages),
             "messages": messages,
+            "prompt_preview": prompt_preview or {},
         }
 
         try:
@@ -295,6 +331,33 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
                     logs_content.append(f"# {date.strftime('%Y-%m-%d')}\n\n{f.read()}")
 
         return "\n\n".join(logs_content) if logs_content else "No recent logs."
+
+    def get_recent_activity_summary(
+        self,
+        max_sessions: int = 3,
+        max_messages_per_session: int = 4,
+        max_chars: int = 280,
+    ) -> str:
+        """Build a lightweight summary of recent user/assistant activity."""
+        sessions = self.list_sessions()[:max_sessions]
+        if not sessions:
+            return "No recent session activity."
+
+        lines: List[str] = []
+
+        for session in sessions:
+            history = self.load_session(session["session_id"])
+            relevant_messages = [msg for msg in history if msg.role in {"user", "assistant"}]
+            if not relevant_messages:
+                continue
+
+            lines.append(f"Session `{session['session_id']}`:")
+            for msg in relevant_messages[-max_messages_per_session:]:
+                label = "User" if msg.role == "user" else "Assistant"
+                snippet = " ".join((msg.content or "").split())
+                lines.append(f"- {label}: {self._truncate_text(snippet, max_chars=max_chars)}")
+
+        return "\n".join(lines) if lines else "No recent session activity."
 
     def get_workspace_file(self, filename: str) -> str:
         """Read a workspace prompt file."""

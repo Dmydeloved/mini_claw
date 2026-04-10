@@ -6,7 +6,7 @@ RESTful API server for agent interactions and file editing.
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
@@ -110,6 +110,26 @@ class CreateSessionResponse(BaseModel):
 class RawMessage(BaseModel):
     role: str
     content: str
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+
+
+class PromptSection(BaseModel):
+    name: str
+    content: str
+
+
+class PromptPreview(BaseModel):
+    system_sections: List[PromptSection]
+    persona_sections: List[PromptSection]
+    skills_summary: str
+    tools_and_functions: str
+    retrieved_memory: str
+    current_context: str
+    autonomous_agent_loop: str
+    current_user_message: str
+    conversation_messages: List[RawMessage]
 
 
 class RawMessagesResponse(BaseModel):
@@ -117,6 +137,7 @@ class RawMessagesResponse(BaseModel):
     updated_at: str
     message_count: int
     messages: List[RawMessage]
+    prompt_preview: Optional[PromptPreview] = None
 
 
 def _resolve_project_file(relative_path: str) -> Path:

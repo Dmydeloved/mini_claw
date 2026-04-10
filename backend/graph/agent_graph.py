@@ -153,30 +153,18 @@ class MiniOpenClawAgent:
             return f.read()
 
     def _build_tool_definitions(self) -> str:
-        """Serialize all available tool/function definitions for the prompt."""
-        blocks: List[str] = []
+        """Build a compact prompt-visible tool guide."""
+        lines = [
+            "Tools are already bound natively to the model.",
+            "Use actual tool calls instead of describing pseudo-calls in plain text.",
+            "",
+            "Available tools:",
+        ]
 
         for tool in self.tools:
-            args_schema = getattr(tool, "args", {}) or {}
-            try:
-                schema_text = json.dumps(args_schema, ensure_ascii=False, indent=2)
-            except TypeError:
-                schema_text = self._stringify_content(args_schema)
+            lines.append(f"- {tool.name}: {tool.description.strip()}")
 
-            blocks.extend(
-                [
-                    f"## {tool.name}",
-                    tool.description.strip(),
-                    "",
-                    "Arguments schema:",
-                    "```json",
-                    schema_text,
-                    "```",
-                    "",
-                ]
-            )
-
-        return "\n".join(blocks).strip() or "No tools currently available."
+        return "\n".join(lines).strip()
 
     def _build_runtime_context(
         self,
@@ -192,9 +180,6 @@ class MiniOpenClawAgent:
             f"- loop_iteration: {iteration + 1}/{self.max_tool_iterations}",
         ]
 
-        if user_message:
-            lines.append(f"- current_user_query: {user_message}")
-
         matched_skill = self.skill_manager.match_trigger(user_message or "")
         if matched_skill:
             lines.append(
@@ -206,29 +191,36 @@ class MiniOpenClawAgent:
         if tool_result_count:
             lines.append(f"- tool_results_collected_in_current_turn: {tool_result_count}")
 
-        skill_request = self._extract_skill_creation_request(user_message)
-        if skill_request:
-            lines.append("- skill_creation_request_detected: true")
-            lines.append(f"- requested_skill_name: {skill_request['name']}")
-            lines.append(f"- suggested_skill_file_path: {skill_request['file_path']}")
-            if skill_request.get("validation_error"):
+        embedded_skill_draft = self._inspect_embedded_skill_draft(user_message)
+        if embedded_skill_draft:
+            lines.append("- embedded_skill_draft_detected: true")
+            lines.append(f"- embedded_skill_name: {embedded_skill_draft['name']}")
+            lines.append(
+                f"- embedded_skill_file_path_hint: {embedded_skill_draft['file_path']}"
+            )
+            if embedded_skill_draft.get("validation_error"):
                 lines.append(
-                    "- user_skill_draft_status: "
-                    f"draft is incomplete ({skill_request['validation_error']})"
+                    "- embedded_skill_draft_status: "
+                    f"incomplete ({embedded_skill_draft['validation_error']})"
                 )
             else:
-                lines.append("- user_skill_draft_status: draft already includes valid skill frontmatter")
+                lines.append("- embedded_skill_draft_status: valid frontmatter detected")
 
             if self._has_skill_write_in_turn(loop_messages):
-                lines.append("- requested_skill_persistence_status: already written in this turn")
-            else:
-                lines.append("- requested_skill_persistence_status: pending")
-                lines.append(
-                    "- required_action: use `write_file` to persist a valid "
-                    "`skills/<skill_name>/SKILL.md` file before finishing"
-                )
+                lines.append("- embedded_skill_persistence_status: already written in this turn")
 
         return "\n".join(lines)
+
+    def _build_memory_context(self) -> str:
+        """Build the prompt-visible memory context injected into the system prompt."""
+        memory_content = self.memory_manager.get_memory_content()
+        recent_activity = self.memory_manager.get_recent_activity_summary()
+        return (
+            "## Core Memory\n\n"
+            f"{memory_content}\n\n"
+            "## Recent Activity Summary\n\n"
+            f"{recent_activity}"
+        )
 
     def _build_system_prompt(self, extra_context: Optional[str] = None) -> str:
         """Build the full OpenClaw-style prompt scaffold before every LLM call."""
@@ -247,8 +239,7 @@ class MiniOpenClawAgent:
             ("AGENTS.md", self.memory_manager.get_workspace_file("AGENTS.md")),
             ("SKILLS_SUMMARY.md", self.skill_manager.build_skills_prompt()),
             ("TOOLS_AND_FUNCTIONS.md", self._build_tool_definitions()),
-            ("MEMORY.md", self.memory_manager.get_memory_content()),
-            ("RECENT_LOGS.md", self.memory_manager.get_recent_logs()),
+            ("RETRIEVED_MEMORY.md", self._build_memory_context()),
         ]
 
         if extra_context:
@@ -268,8 +259,9 @@ class MiniOpenClawAgent:
                     "5. Follow the skill protocol strictly: the prompt only contains each skill's name and description. "
                     "If you need to use a skill, first read `workspace/SKILLS_SNAPSHOT.md` to locate it, then read the skill file with `read_file`.\n"
                     "6. Base conclusions on files and tool results, and distinguish facts from inference.\n"
-                    "7. When the user asks to add, create, save, or update a skill, you must use `write_file` "
-                    "to create or update `skills/<skill_name>/SKILL.md` instead of only describing the plan.\n"
+                    "7. When the user asks to add, create, save, or update a skill, first use the "
+                    "dedicated skill-authoring workflow if available, then use `write_file` to create "
+                    "or update `skills/<skill_name>/SKILL.md` instead of only describing the plan.\n"
                     "8. A valid `SKILL.md` file must contain YAML frontmatter with at least "
                     "`name` and `description`. `trigger` is optional and only serves as a routing hint. "
                     "Add `enabled: true` unless the user requests otherwise.\n"
@@ -405,36 +397,8 @@ class MiniOpenClawAgent:
 
         return None
 
-    def _is_skill_creation_request(self, user_message: Optional[str]) -> bool:
-        """Detect whether the user is asking to add or update a skill."""
-        if not user_message:
-            return False
-
-        lowered = user_message.lower()
-        patterns = (
-            "添加这个技能",
-            "添加技能",
-            "新增技能",
-            "创建技能",
-            "保存技能",
-            "帮我添加",
-            "帮我创建",
-            "add this skill",
-            "add the skill",
-            "create this skill",
-            "create a skill",
-            "save this skill",
-            "update this skill",
-        )
-        return any(pattern in lowered for pattern in patterns) or "skill" in lowered and (
-            "添加" in user_message or "新增" in user_message or "创建" in user_message or "add" in lowered
-        )
-
-    def _extract_skill_creation_request(self, user_message: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Extract a requested skill draft and its target path from the user message."""
-        if not self._is_skill_creation_request(user_message):
-            return None
-
+    def _inspect_embedded_skill_draft(self, user_message: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Inspect an embedded SKILL.md draft without inferring the user's intent."""
         embedded_markdown = self._extract_embedded_skill_markdown(user_message)
         if not embedded_markdown:
             return None
@@ -549,6 +513,41 @@ class MiniOpenClawAgent:
             return f"[Tool `{tool_name}` Result]\n{content}"
         return f"[Tool Result]\n{content}"
 
+    def _summarize_tool_content_for_history(self, msg: Message) -> str:
+        """Compress verbose tool outputs before replaying them into model history."""
+        tool_name = msg.name or (msg.tool_calls[0].get("name") if msg.tool_calls else None) or "tool"
+        tool_args = msg.tool_calls[0].get("args", {}) if msg.tool_calls else {}
+        raw_content = msg.content or ""
+
+        if tool_name == "read_file":
+            file_path = str(tool_args.get("file_path", ""))
+            if self._is_skill_file_path(file_path):
+                inspection = self.skill_manager.inspect_skill_content(raw_content)
+                if inspection:
+                    metadata = inspection.get("metadata", {})
+                    validation_error = inspection.get("validation_error")
+                    status = "valid" if inspection.get("is_valid") else f"invalid ({validation_error})"
+                    return (
+                        f"Read skill file `{file_path}`.\n"
+                        f"- name: {metadata.get('name', '')}\n"
+                        f"- description: {metadata.get('description', '')}\n"
+                        f"- status: {status}"
+                    )
+            return f"Read file `{file_path}`.\n{self._truncate_component(raw_content, max_chars=1200)}"
+
+        if tool_name == "fetch_url":
+            url = str(tool_args.get("url", ""))
+            return f"Fetched `{url}`.\n{self._truncate_component(raw_content, max_chars=1600)}"
+
+        if tool_name == "write_file":
+            file_path = str(tool_args.get("file_path", ""))
+            return f"Wrote `{file_path}`.\n{self._truncate_component(raw_content, max_chars=600)}"
+
+        if tool_name == "terminal":
+            return self._truncate_component(raw_content, max_chars=1200)
+
+        return self._truncate_component(raw_content, max_chars=1000)
+
     def _history_to_langchain_messages(self, history: List[Message]) -> List[BaseMessage]:
         """Convert persisted message history into LangChain messages."""
         chat_history: List[BaseMessage] = []
@@ -599,7 +598,7 @@ class MiniOpenClawAgent:
                 if not tool_name and msg.tool_calls:
                     tool_name = msg.tool_calls[0].get("name")
 
-                content = self._truncate_component(msg.content, max_chars=12000)
+                content = self._summarize_tool_content_for_history(msg)
                 if tool_call_id and tool_call_id in known_tool_call_ids:
                     chat_history.append(
                         ToolMessage(content=content, tool_call_id=tool_call_id, name=tool_name)
@@ -649,6 +648,54 @@ class MiniOpenClawAgent:
             raw_messages.append(payload)
 
         return raw_messages
+
+    def _parse_system_sections(self, system_prompt: str) -> List[Dict[str, str]]:
+        """Parse the rendered system prompt into named sections for UI inspection."""
+        sections: List[Dict[str, str]] = []
+        matches = list(
+            re.finditer(r"^# ([A-Za-z0-9_./-]+\.md)\n\n", system_prompt, re.MULTILINE)
+        )
+
+        for index, match in enumerate(matches):
+            name = match.group(1).strip()
+            content_start = match.end()
+            content_end = matches[index + 1].start() if index + 1 < len(matches) else len(system_prompt)
+            content = system_prompt[content_start:content_end].strip()
+            sections.append({"name": name, "content": content})
+
+        return sections
+
+    def _build_prompt_preview(self, raw_messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build a structured preview of the prompt for easier inspection."""
+        system_message = next(
+            (message for message in raw_messages if message.get("role") == "system"),
+            None,
+        )
+        system_sections = self._parse_system_sections(system_message.get("content", "")) if system_message else []
+        section_map = {section["name"]: section["content"] for section in system_sections}
+        conversation_messages = [message for message in raw_messages if message.get("role") != "system"]
+
+        current_user_message = ""
+        for message in reversed(conversation_messages):
+            if message.get("role") == "user" and str(message.get("content", "")).strip():
+                current_user_message = str(message.get("content", ""))
+                break
+
+        return {
+            "system_sections": system_sections,
+            "persona_sections": [
+                section
+                for section in system_sections
+                if section["name"] in {"SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md"}
+            ],
+            "skills_summary": section_map.get("SKILLS_SUMMARY.md", ""),
+            "tools_and_functions": section_map.get("TOOLS_AND_FUNCTIONS.md", ""),
+            "retrieved_memory": section_map.get("RETRIEVED_MEMORY.md", ""),
+            "current_context": section_map.get("CURRENT_CONTEXT.md", ""),
+            "autonomous_agent_loop": section_map.get("AUTONOMOUS_AGENT_LOOP.md", ""),
+            "current_user_message": current_user_message,
+            "conversation_messages": conversation_messages,
+        }
 
     def _build_prompt_messages(
         self,
@@ -792,7 +839,6 @@ class MiniOpenClawAgent:
     ) -> Tuple[str, List[Message]]:
         """Run the explicit OpenClaw-style autonomous tool loop."""
         timestamp = datetime.now().isoformat()
-        requested_skill = self._extract_skill_creation_request(user_message)
         turn_messages: List[Message] = [
             Message(role="user", content=user_message, timestamp=timestamp)
         ]
@@ -810,7 +856,11 @@ class MiniOpenClawAgent:
             combined_history = [*history, *turn_messages]
             prompt_messages = self._build_prompt_messages(system_prompt, combined_history)
             raw_messages = self._serialize_prompt_messages(prompt_messages)
-            self.memory_manager.save_raw_messages(session_id, raw_messages)
+            self.memory_manager.save_raw_messages(
+                session_id,
+                raw_messages,
+                prompt_preview=self._build_prompt_preview(raw_messages),
+            )
 
             response = self._invoke_model(prompt_messages)
             reply, _ = self._extract_reply_and_tool_messages(response)
@@ -827,13 +877,6 @@ class MiniOpenClawAgent:
             if tool_calls:
                 for tool_call in tool_calls:
                     turn_messages.append(self._execute_tool_call(tool_call))
-                continue
-
-            if (
-                iteration == 0
-                and requested_skill
-                and not self._has_skill_write_in_turn(turn_messages)
-            ):
                 continue
 
             final_reply = reply or "任务已完成，但模型没有返回可见文本。"
@@ -910,7 +953,11 @@ class MiniOpenClawAgent:
             extra_context=self._build_runtime_context(session_id=session_id, user_message=None)
         )
         raw_messages = self._build_raw_messages(system_prompt, [])
-        self.memory_manager.save_raw_messages(session_id, raw_messages)
+        self.memory_manager.save_raw_messages(
+            session_id,
+            raw_messages,
+            prompt_preview=self._build_prompt_preview(raw_messages),
+        )
 
         return {"session_id": session_id}
 
@@ -941,6 +988,8 @@ class MiniOpenClawAgent:
         """Get the latest raw prompt payload for a session."""
         payload = self.memory_manager.load_raw_messages(session_id)
         if payload.get("messages"):
+            if not payload.get("prompt_preview"):
+                payload["prompt_preview"] = self._build_prompt_preview(payload["messages"])
             return payload
 
         history = self.memory_manager.load_session(session_id)
@@ -953,6 +1002,7 @@ class MiniOpenClawAgent:
             "updated_at": datetime.now().isoformat(),
             "message_count": len(preview_messages),
             "messages": preview_messages,
+            "prompt_preview": self._build_prompt_preview(preview_messages),
         }
 
     def preview_raw_messages(self, session_id: Optional[str] = None) -> Dict:
@@ -968,4 +1018,5 @@ class MiniOpenClawAgent:
             "updated_at": datetime.now().isoformat(),
             "message_count": len(preview_messages),
             "messages": preview_messages,
+            "prompt_preview": self._build_prompt_preview(preview_messages),
         }
