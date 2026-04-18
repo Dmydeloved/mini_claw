@@ -141,11 +141,11 @@ OPENAI_BASE_URL=https://api.openrouter.ai/v1
 MODEL_NAME=anthropic/claude-3.5-sonnet
 
 # 路径配置
-MEMORY_DIR=./memory
+MEMORY_DIR=./workspace/memory
 SKILLS_DIR=./skills
 WORKSPACE_DIR=./workspace
 KNOWLEDGE_DIR=./knowledge
-SESSIONS_DIR=./sessions
+SESSIONS_DIR=./workspace/sessions
 
 # 服务器
 PORT=8002

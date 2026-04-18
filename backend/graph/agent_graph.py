@@ -45,6 +45,7 @@ class MiniOpenClawAgent:
         default_headers: Optional[Dict[str, str]] = None,
         use_responses_api: bool = False,
         root_dir: Optional[str] = None,
+        workspace_dir: Optional[str] = None,
         skills_dir: Optional[str] = None,
         memory_dir: Optional[str] = None,
         sessions_dir: Optional[str] = None,
@@ -56,13 +57,25 @@ class MiniOpenClawAgent:
         if root_dir is None:
             root_dir = os.getcwd()
 
-        self.root_dir = root_dir
-        self.skills_dir = skills_dir or os.path.join(root_dir, "skills")
-        self.memory_dir = memory_dir or os.path.join(root_dir, "memory")
-        self.sessions_dir = sessions_dir or os.path.join(root_dir, "sessions")
-        self.workspace_dir = os.path.join(root_dir, "workspace")
-        self.knowledge_dir = knowledge_dir or os.path.join(root_dir, "knowledge")
-        self.storage_dir = storage_dir or os.path.join(root_dir, "storage")
+        self.root_dir = os.path.abspath(root_dir)
+        self.workspace_dir = os.path.abspath(
+            workspace_dir or os.path.join(self.root_dir, "workspace")
+        )
+        self.skills_dir = os.path.abspath(
+            skills_dir or os.path.join(self.root_dir, "skills")
+        )
+        self.memory_dir = os.path.abspath(
+            memory_dir or os.path.join(self.workspace_dir, "memory")
+        )
+        self.sessions_dir = os.path.abspath(
+            sessions_dir or os.path.join(self.workspace_dir, "sessions")
+        )
+        self.knowledge_dir = os.path.abspath(
+            knowledge_dir or os.path.join(self.root_dir, "knowledge")
+        )
+        self.storage_dir = os.path.abspath(
+            storage_dir or os.path.join(self.root_dir, "storage")
+        )
         self.max_tool_iterations = max(1, max_tool_iterations)
 
         # Initialize LLM

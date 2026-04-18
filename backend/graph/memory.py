@@ -105,8 +105,8 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
 
 ## 记忆协议
 
-1. 长期事实记录在 `memory/MEMORY.md`。
-2. 会话历史保存在 `sessions/*.json`。
+1. 长期事实记录在 `workspace/memory/MEMORY.md`。
+2. 会话历史保存在 `workspace/sessions/*.json`。
 3. 如需引用项目规则或用户画像，请优先参考工作区文件。
 4. 如果你不确定某个事实是否准确，应明确说明不确定，而不是把猜测写进记忆。
 """,

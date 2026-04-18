@@ -14,7 +14,6 @@ import {
   previewRawMessages,
   saveFile,
   sendMessage,
-  type RawMessagesResponse,
   type SessionInfo,
   type Skill,
 } from '@/lib/api';
@@ -24,42 +23,126 @@ interface Message {
   content: string;
 }
 
-type PanelTab = 'chat' | 'memory' | 'skills';
-type InspectorMode = 'editor' | 'raw';
+interface FilePanelItem {
+  path: string;
+  label: string;
+  description: string;
+}
 
-const MEMORY_FILE = 'memory/MEMORY.md';
-const WORKSPACE_FILES = [
-  'workspace/SKILLS_SNAPSHOT.md',
-  'workspace/SOUL.md',
-  'workspace/IDENTITY.md',
-  'workspace/USER.md',
-  'workspace/AGENTS.md',
+type PanelTab = 'chat' | 'memory' | 'skills';
+type ChatInspectorTab = 'session' | 'log' | 'raw';
+
+const MEMORY_FILE = 'workspace/memory/MEMORY.md';
+const MEMORY_FILES: FilePanelItem[] = [
+  { path: 'workspace/memory/MEMORY.md', label: 'MEMORY.md', description: 'Core memory' },
+  { path: 'workspace/SOUL.md', label: 'SOUL.md', description: 'System soul' },
+  { path: 'workspace/IDENTITY.md', label: 'IDENTITY.md', description: 'Identity rules' },
+  { path: 'workspace/USER.md', label: 'USER.md', description: 'User profile' },
+  { path: 'workspace/AGENTS.md', label: 'AGENTS.md', description: 'Agent protocol' },
+  {
+    path: 'workspace/SKILLS_SNAPSHOT.md',
+    label: 'SKILLS_SNAPSHOT.md',
+    description: 'Skills snapshot',
+  },
 ];
+
+function formatTodayLogPath() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = `${now.getMonth() + 1}`.padStart(2, '0');
+  const day = `${now.getDate()}`.padStart(2, '0');
+  return `workspace/memory/logs/${year}-${month}-${day}.md`;
+}
+
+function getSessionFilePath(sessionId: string) {
+  return `workspace/sessions/${sessionId}.json`;
+}
+
+function getRawMessagesFilePath(sessionId: string) {
+  return `workspace/sessions/_raw_messages/${sessionId}.json`;
+}
+
+function inferEditorLanguage(path: string) {
+  if (path.endsWith('.json')) return 'json';
+  if (path.endsWith('.md')) return 'markdown';
+  if (path.endsWith('.py')) return 'python';
+  return 'plaintext';
+}
+
+function parseSessionMessages(content: string): Message[] {
+  try {
+    const history = JSON.parse(content) as Array<{ role?: string; content?: string }>;
+    return history
+      .filter(
+        (message): message is Message =>
+          (message.role === 'user' || message.role === 'assistant') &&
+          typeof message.content === 'string'
+      )
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
+  } catch {
+    return [];
+  }
+}
 
 export default function ChatWindow() {
   const [activeTab, setActiveTab] = useState<PanelTab>('chat');
-  const [inspectorMode, setInspectorMode] = useState<InspectorMode>('editor');
+  const [chatInspectorTab, setChatInspectorTab] = useState<ChatInspectorTab>('session');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [rawLoading, setRawLoading] = useState(false);
+  const [chatInspectorLoading, setChatInspectorLoading] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [editorPath, setEditorPath] = useState(MEMORY_FILE);
   const [editorContent, setEditorContent] = useState('');
+  const [editorLabel, setEditorLabel] = useState('Memory Editor');
   const [editorDirty, setEditorDirty] = useState(false);
+  const [sessionRecordContent, setSessionRecordContent] = useState('[]');
+  const [todayLogContent, setTodayLogContent] = useState('# Today Log\n\nNo log for today yet.');
+  const [rawMessagesContent, setRawMessagesContent] = useState(
+    '{\n  "message_count": 0,\n  "messages": []\n}'
+  );
   const [statusText, setStatusText] = useState('Ready');
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [rawMessages, setRawMessages] = useState<RawMessagesResponse | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const todayLogPath = useMemo(() => formatTodayLogPath(), []);
+
   const editorTitle = useMemo(() => {
+    if (activeTab === 'memory') return 'Memory Editor';
+    if (editorLabel) return editorLabel;
     const parts = editorPath.split('/');
     return parts[parts.length - 1] ?? editorPath;
-  }, [editorPath]);
+  }, [activeTab, editorLabel, editorPath]);
+
+  const chatInspectorPath =
+    chatInspectorTab === 'session'
+      ? sessionId
+        ? getSessionFilePath(sessionId)
+        : 'workspace/sessions/session.json'
+      : chatInspectorTab === 'raw'
+        ? sessionId
+          ? getRawMessagesFilePath(sessionId)
+          : 'preview'
+        : todayLogPath;
+  const chatInspectorTitle =
+    chatInspectorTab === 'session'
+      ? 'Session Record'
+      : chatInspectorTab === 'raw'
+        ? 'Raw Prompt'
+        : 'Today Log';
+  const chatInspectorContent =
+    chatInspectorTab === 'session'
+      ? sessionRecordContent
+      : chatInspectorTab === 'raw'
+        ? rawMessagesContent
+        : todayLogContent;
 
   const layoutColumns = `${leftCollapsed ? '76px' : '320px'} minmax(0,1fr) ${
     rightCollapsed ? '76px' : '460px'
@@ -67,7 +150,7 @@ export default function ChatWindow() {
 
   const isErrorMessage = (message: Message) =>
     message.role === 'assistant' &&
-    (message.content.startsWith('Error:') || message.content.includes('模型调用失败'));
+    (message.content.startsWith('Error:') || message.content.includes('Connection error'));
 
   useEffect(() => {
     void bootstrap();
@@ -77,23 +160,81 @@ export default function ChatWindow() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
+  async function loadChatArtifacts(targetSessionId?: string) {
+    const sessionPath = targetSessionId ? getSessionFilePath(targetSessionId) : '';
+
+    const sessionFilePromise = sessionPath
+      ? getFile(sessionPath).catch(() => ({ path: sessionPath, content: '[]' }))
+      : Promise.resolve({ path: '', content: '[]' });
+
+    const rawMessagesFilePromise = (targetSessionId
+      ? getRawMessages(targetSessionId)
+      : previewRawMessages()
+    )
+      .then((payload) => ({
+        path: targetSessionId ? getRawMessagesFilePath(targetSessionId) : 'preview',
+        content: JSON.stringify(payload, null, 2),
+      }))
+      .catch(() => ({
+        path: targetSessionId ? getRawMessagesFilePath(targetSessionId) : 'preview',
+        content: '{\n  "message_count": 0,\n  "messages": []\n}',
+      }));
+
+    const logFilePromise = getFile(todayLogPath).catch(() => ({
+      path: todayLogPath,
+      content: '# Today Log\n\nNo log for today yet.',
+    }));
+
+    const [sessionFile, rawMessagesFile, logFile] = await Promise.all([
+      sessionFilePromise,
+      rawMessagesFilePromise,
+      logFilePromise,
+    ]);
+    return { sessionFile, rawMessagesFile, logFile };
+  }
+
+  async function refreshChatInspector(targetSessionId?: string) {
+    try {
+      setChatInspectorLoading(true);
+      const { sessionFile, rawMessagesFile, logFile } = await loadChatArtifacts(targetSessionId);
+      setSessionRecordContent(sessionFile.content);
+      setRawMessagesContent(rawMessagesFile.content);
+      setTodayLogContent(logFile.content);
+    } catch (error) {
+      console.error(error);
+      setStatusText('Failed to refresh chat context');
+    } finally {
+      setChatInspectorLoading(false);
+    }
+  }
+
   async function bootstrap() {
     try {
-      const [skillsData, sessionsData, memoryFile, rawPreview] = await Promise.all([
+      const [skillsResult, sessionsResult, memoryResult] = await Promise.allSettled([
         getSkills(),
         getSessions(),
         getFile(MEMORY_FILE),
-        previewRawMessages(),
       ]);
+
+      const skillsData = skillsResult.status === 'fulfilled' ? skillsResult.value : [];
+      const sessionsData = sessionsResult.status === 'fulfilled' ? sessionsResult.value : [];
+      const memoryFile =
+        memoryResult.status === 'fulfilled'
+          ? memoryResult.value
+          : { path: MEMORY_FILE, content: '' };
 
       setSkills(skillsData);
       setSessions(sessionsData);
+      setEditorPath(memoryFile.path);
+      setEditorLabel('Memory Editor');
       setEditorContent(memoryFile.content);
-      setRawMessages(rawPreview);
+      setEditorDirty(false);
       setStatusText('Workspace loaded');
 
       if (sessionsData.length > 0) {
         await openSession(sessionsData[0].session_id, true);
+      } else {
+        await refreshChatInspector();
       }
     } catch (error) {
       console.error(error);
@@ -101,31 +242,16 @@ export default function ChatWindow() {
     }
   }
 
-  async function refreshRawMessages(targetSessionId?: string) {
-    try {
-      setRawLoading(true);
-      const payload = targetSessionId
-        ? await getRawMessages(targetSessionId)
-        : await previewRawMessages();
-      setRawMessages(payload);
-    } catch (error) {
-      console.error(error);
-      const fallback = targetSessionId
-        ? await previewRawMessages(targetSessionId)
-        : await previewRawMessages();
-      setRawMessages(fallback);
-    } finally {
-      setRawLoading(false);
-    }
-  }
-
   async function openFile(path: string) {
     try {
       const file = await getFile(path);
+      const selectedFile = MEMORY_FILES.find((item) => item.path === path);
       setEditorPath(file.path);
+      setEditorLabel(selectedFile?.label ?? 'Memory Editor');
       setEditorContent(file.content);
       setEditorDirty(false);
-      setInspectorMode('editor');
+      setActiveTab('memory');
+      setRightCollapsed(false);
       setStatusText(`Opened ${file.path}`);
     } catch (error) {
       console.error(error);
@@ -137,10 +263,11 @@ export default function ChatWindow() {
     try {
       const skill = await getSkillContent(skillName);
       setEditorPath(skill.path);
+      setEditorLabel(skill.name);
       setEditorContent(skill.content);
       setEditorDirty(false);
-      setInspectorMode('editor');
       setActiveTab('skills');
+      setRightCollapsed(false);
       setStatusText(`Opened skill ${skillName}`);
     } catch (error) {
       console.error(error);
@@ -150,30 +277,16 @@ export default function ChatWindow() {
 
   async function openSession(nextSessionId: string, silent = false) {
     try {
-      const [file, payload] = await Promise.all([
-        getFile(`sessions/${nextSessionId}.json`),
-        getRawMessages(nextSessionId),
-      ]);
-
-      const history = JSON.parse(file.content) as Array<{
-        role: string;
-        content: string;
-      }>;
+      const { sessionFile, rawMessagesFile, logFile } = await loadChatArtifacts(nextSessionId);
 
       setSessionId(nextSessionId);
-      setRawMessages(payload);
-      setMessages(
-        history
-          .filter(
-            (message): message is Message =>
-              (message.role === 'user' || message.role === 'assistant') &&
-              typeof message.content === 'string'
-          )
-          .map((message) => ({
-            role: message.role,
-            content: message.content,
-          }))
-      );
+      setMessages(parseSessionMessages(sessionFile.content));
+      setSessionRecordContent(sessionFile.content);
+      setRawMessagesContent(rawMessagesFile.content);
+      setTodayLogContent(logFile.content);
+      setActiveTab('chat');
+      setChatInspectorTab('session');
+      setRightCollapsed(false);
 
       if (!silent) {
         setStatusText(`Opened session ${nextSessionId}`);
@@ -190,18 +303,21 @@ export default function ChatWindow() {
       setInput('');
       setMessages([]);
       setActiveTab('chat');
-      setInspectorMode('raw');
+      setChatInspectorTab('session');
       setRightCollapsed(false);
 
       const { session_id: nextSessionId } = await createSession();
-      const [sessionsData, payload] = await Promise.all([
+      const [sessionsData, artifacts] = await Promise.all([
         getSessions(),
-        getRawMessages(nextSessionId),
+        loadChatArtifacts(nextSessionId),
       ]);
 
       setSessionId(nextSessionId);
       setSessions(sessionsData);
-      setRawMessages(payload);
+      setSessionRecordContent(artifacts.sessionFile.content);
+      setRawMessagesContent(artifacts.rawMessagesFile.content);
+      setTodayLogContent(artifacts.logFile.content);
+      setMessages([]);
       setStatusText(`New session ${nextSessionId}`);
     } catch (error) {
       console.error(error);
@@ -216,7 +332,7 @@ export default function ChatWindow() {
       setEditorDirty(false);
       setStatusText(`Saved ${editorPath}`);
 
-      if (editorPath === MEMORY_FILE || editorPath.endsWith('/SKILL.md')) {
+      if (editorPath.endsWith('/SKILL.md')) {
         const [skillsData, sessionsData] = await Promise.all([getSkills(), getSessions()]);
         setSkills(skillsData);
         setSessions(sessionsData);
@@ -237,34 +353,31 @@ export default function ChatWindow() {
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
     setStatusText('Agent is thinking');
+    setActiveTab('chat');
+    setChatInspectorTab('session');
+    setRightCollapsed(false);
 
     try {
       const response = await sendMessage(userMessage, sessionId);
-      setSessionId(response.session_id);
-      setMessages((prev) => [...prev, { role: 'assistant', content: response.reply }]);
-
-      const [sessionsData, payload] = await Promise.all([
+      const [sessionsData, artifacts] = await Promise.all([
         getSessions(),
-        getRawMessages(response.session_id),
+        loadChatArtifacts(response.session_id),
       ]);
 
+      setSessionId(response.session_id);
       setSessions(sessionsData);
-      setRawMessages(payload);
-      setInspectorMode('raw');
-      setRightCollapsed(false);
+      setSessionRecordContent(artifacts.sessionFile.content);
+      setRawMessagesContent(artifacts.rawMessagesFile.content);
+      setTodayLogContent(artifacts.logFile.content);
+      setMessages(parseSessionMessages(artifacts.sessionFile.content));
       setStatusText(`Updated session ${response.session_id}`);
     } catch (error) {
       console.error(error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content:
-            error instanceof Error
-              ? error.message
-              : '连接失败：无法连接后端服务，请检查 backend 是否已启动。',
-        },
-      ]);
+      const fallbackMessage =
+        error instanceof Error
+          ? error.message
+          : 'Connection error: backend is unavailable.';
+      setMessages((prev) => [...prev, { role: 'assistant', content: fallbackMessage }]);
       setStatusText('Chat request failed');
     } finally {
       setLoading(false);
@@ -283,7 +396,7 @@ export default function ChatWindow() {
             href="#"
             className="rounded-full border border-blue-200 bg-white/80 px-4 py-2 text-sm text-blue-700 transition hover:border-blue-400 hover:text-blue-900"
           >
-            赋范空间
+            Workspace
           </a>
         </header>
 
@@ -409,19 +522,18 @@ export default function ChatWindow() {
                       <section>
                         <p className="panel-label">Memory Files</p>
                         <div className="mt-3 space-y-2">
-                          <button
-                            onClick={() => openFile(MEMORY_FILE)}
-                            className="sidebar-item w-full text-left"
-                          >
-                            Core Memory
-                          </button>
-                          {WORKSPACE_FILES.map((path) => (
+                          {MEMORY_FILES.map((item) => (
                             <button
-                              key={path}
-                              onClick={() => openFile(path)}
-                              className="sidebar-item w-full text-left"
+                              key={item.path}
+                              onClick={() => void openFile(item.path)}
+                              className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                                editorPath === item.path
+                                  ? 'border-blue-400 bg-blue-50'
+                                  : 'border-white/70 bg-white/70 hover:border-blue-200'
+                              }`}
                             >
-                              {path.replace('workspace/', '')}
+                              <p className="text-sm font-medium text-slate-900">{item.label}</p>
+                              <p className="mt-1 text-xs text-slate-500">{item.description}</p>
                             </button>
                           ))}
                         </div>
@@ -430,16 +542,18 @@ export default function ChatWindow() {
 
                     {activeTab === 'skills' && (
                       <section>
-                        <p className="panel-label">Installed Skills</p>
+                        <p className="panel-label">Skills</p>
                         <div className="mt-3 space-y-2">
+                          {skills.length === 0 && (
+                            <p className="text-sm text-slate-500">No skills found in backend/skills.</p>
+                          )}
                           {skills.map((skill) => (
                             <button
                               key={skill.name}
-                              onClick={() => openSkill(skill.name)}
+                              onClick={() => void openSkill(skill.name)}
                               className="w-full rounded-2xl border border-white/70 bg-white/75 px-3 py-3 text-left transition hover:border-blue-200"
                             >
                               <p className="text-sm font-medium text-slate-900">{skill.name}</p>
-                              <p className="mt-1 text-xs text-slate-500">{skill.description}</p>
                               <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-blue-700">
                                 {skill.location}
                               </p>
@@ -458,14 +572,15 @@ export default function ChatWindow() {
                 <div className="flex items-center justify-between gap-4">
                   <p className="panel-label">Stage</p>
                   <button
-                    onClick={async () => {
-                      setInspectorMode('raw');
+                    onClick={() => {
+                      setActiveTab('chat');
+                      setChatInspectorTab('raw');
                       setRightCollapsed(false);
-                      await refreshRawMessages(sessionId);
+                      void refreshChatInspector(sessionId);
                     }}
                     className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-xs text-slate-600 transition hover:border-blue-300 hover:text-blue-700"
                   >
-                    Show Raw Messages
+                    Raw Prompt
                   </button>
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-4">
@@ -483,10 +598,11 @@ export default function ChatWindow() {
                   <div className="mx-auto mt-12 max-w-xl rounded-[28px] border border-dashed border-blue-200 bg-white/70 px-8 py-10 text-center">
                     <p className="text-sm uppercase tracking-[0.28em] text-blue-700">Local First</p>
                     <h3 className="mt-3 text-2xl font-semibold text-slate-900">
-                      Start a fresh chat or inspect the current system prompt.
+                      Start a fresh chat or review the workspace memory files.
                     </h3>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
-                      当前右侧 `Raw Messages` 会在没有用户输入时也显示 system 内容，方便直接检查 prompt 拼装。
+                      The right panel shows the session record, raw prompt, and today&apos;s log
+                      during chat, and becomes an editable file panel in the memory workspace.
                     </p>
                   </div>
                 ) : (
@@ -567,7 +683,7 @@ export default function ChatWindow() {
                         void handleSend();
                       }
                     }}
-                    placeholder="输入消息，按 Enter 发送，Shift + Enter 换行"
+                    placeholder="Type a message. Press Enter to send, Shift + Enter for a new line."
                     className="h-28 w-full resize-none border-0 bg-transparent px-3 py-3 text-sm leading-7 text-slate-800 outline-none placeholder:text-slate-400"
                     disabled={loading}
                   />
@@ -598,7 +714,7 @@ export default function ChatWindow() {
                   >
                     &lt;
                   </button>
-                  <div className="vertical-caption">Inspector</div>
+                  <div className="vertical-caption">{activeTab === 'chat' ? 'Context' : 'Editor'}</div>
                   <button
                     onClick={() => setRightCollapsed(false)}
                     className="collapsed-rail-button"
@@ -606,11 +722,11 @@ export default function ChatWindow() {
                     E
                   </button>
                 </div>
-              ) : (
+              ) : activeTab === 'chat' ? (
                 <>
                   <div className="border-b border-white/70 px-5 py-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <p className="panel-label">Inspector</p>
+                      <p className="panel-label">Chat Context</p>
                       <button
                         onClick={() => setRightCollapsed(true)}
                         className="panel-toggle-button"
@@ -622,137 +738,139 @@ export default function ChatWindow() {
 
                     <div className="mb-3 flex rounded-2xl bg-slate-100 p-1">
                       <button
-                        onClick={() => setInspectorMode('editor')}
+                        onClick={() => setChatInspectorTab('session')}
                         className={`flex-1 rounded-xl px-3 py-2 text-sm transition ${
-                          inspectorMode === 'editor'
+                          chatInspectorTab === 'session'
                             ? 'bg-white text-slate-900 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        Editor
+                        Session
                       </button>
                       <button
-                        onClick={async () => {
-                          setInspectorMode('raw');
-                          await refreshRawMessages(sessionId);
-                        }}
+                        onClick={() => setChatInspectorTab('log')}
                         className={`flex-1 rounded-xl px-3 py-2 text-sm transition ${
-                          inspectorMode === 'raw'
+                          chatInspectorTab === 'log'
                             ? 'bg-white text-slate-900 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        Raw Messages
+                        Today Log
+                      </button>
+                      <button
+                        onClick={() => setChatInspectorTab('raw')}
+                        className={`flex-1 rounded-xl px-3 py-2 text-sm transition ${
+                          chatInspectorTab === 'raw'
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        Raw Prompt
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <h2 className="truncate text-lg font-semibold text-slate-900">
-                          {inspectorMode === 'editor' ? editorTitle : 'Raw Messages'}
+                          {chatInspectorTitle}
                         </h2>
-                        <p className="truncate text-sm text-slate-500">
-                          {inspectorMode === 'editor'
-                            ? editorPath
-                            : rawMessages?.updated_at
-                              ? `${rawMessages.message_count} messages • ${new Date(
-                                  rawMessages.updated_at
-                                ).toLocaleString()}`
-                              : 'Current prompt payload preview'}
-                        </p>
+                        <p className="truncate text-sm text-slate-500">{chatInspectorPath}</p>
                       </div>
 
-                      {inspectorMode === 'editor' ? (
-                        <button
-                          onClick={() => void handleSave()}
-                          disabled={saving || !editorDirty}
-                          className="rounded-full border border-blue-300 px-4 py-2 text-sm text-blue-700 transition hover:border-blue-500 hover:text-blue-900 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
-                        >
-                          {saving ? 'Saving...' : 'Save'}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => void refreshRawMessages(sessionId)}
-                          className="rounded-full border border-blue-300 px-4 py-2 text-sm text-blue-700 transition hover:border-blue-500 hover:text-blue-900"
-                        >
-                          {rawLoading ? 'Refreshing...' : 'Refresh'}
-                        </button>
-                      )}
+                      <button
+                        onClick={() => void refreshChatInspector(sessionId)}
+                        className="rounded-full border border-blue-300 px-4 py-2 text-sm text-blue-700 transition hover:border-blue-500 hover:text-blue-900"
+                      >
+                        {chatInspectorLoading ? 'Refreshing...' : 'Refresh'}
+                      </button>
                     </div>
                   </div>
 
-                  {inspectorMode === 'editor' ? (
-                    <>
-                      <div className="grid gap-2 border-b border-white/70 px-5 py-3 sm:grid-cols-2">
-                        <button
-                          onClick={() => openFile(MEMORY_FILE)}
-                          className="sidebar-item text-left"
-                        >
-                          Open MEMORY.md
-                        </button>
-                        <button
-                          onClick={() => openFile('workspace/SKILLS_SNAPSHOT.md')}
-                          className="sidebar-item text-left"
-                        >
-                          Open Snapshot
-                        </button>
-                      </div>
+                  <div className="min-h-0 flex-1">
+                    <Editor
+                      height="100%"
+                      path={chatInspectorPath}
+                      language={inferEditorLanguage(chatInspectorPath)}
+                      theme="vs"
+                      value={chatInspectorContent}
+                      options={{
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        lineNumbers: 'on',
+                        wordWrap: 'on',
+                        roundedSelection: false,
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                      }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="border-b border-white/70 px-5 py-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="panel-label">Editor</p>
+                      <button
+                        onClick={() => setRightCollapsed(true)}
+                        className="panel-toggle-button"
+                        aria-label="Collapse right panel"
+                      >
+                        &gt;
+                      </button>
+                    </div>
 
-                      <div className="min-h-0 flex-1">
-                        <Editor
-                          height="100%"
-                          defaultLanguage="markdown"
-                          language="markdown"
-                          theme="vs"
-                          value={editorContent}
-                          onChange={(value) => {
-                            setEditorContent(value ?? '');
-                            setEditorDirty(true);
-                          }}
-                          options={{
-                            minimap: { enabled: false },
-                            fontSize: 13,
-                            lineNumbers: 'on',
-                            wordWrap: 'on',
-                            roundedSelection: false,
-                            scrollBeyondLastLine: false,
-                            automaticLayout: true,
-                          }}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                      {rawMessages?.messages.length ? (
-                        <div className="space-y-4">
-                          {rawMessages.messages.map((message, index) => (
-                            <section
-                              key={`${message.role}-${index}`}
-                              className={`raw-message-card raw-role-${message.role}`}
-                            >
-                              <div className="mb-3 flex items-center justify-between gap-3">
-                                <p className="raw-message-role">{message.role}</p>
-                                <span className="raw-message-chip">
-                                  {message.role === 'system'
-                                    ? 'System Prompt'
-                                    : message.role === 'user'
-                                      ? 'User Input'
-                                      : message.role === 'assistant'
-                                        ? 'Assistant History'
-                                        : 'Message'}
-                                </span>
-                              </div>
-                              <pre className="raw-message-content">{message.content}</pre>
-                            </section>
-                          ))}
+                    <div className="flex items-center justify-between gap-3">
+                      {activeTab === 'memory' ? (
+                        <div className="min-w-0">
+                          <h2 className="truncate text-lg font-semibold text-slate-900">
+                            {editorTitle}
+                          </h2>
+                          <p className="truncate text-sm text-slate-500">
+                            Edit workspace memory files from the left panel.
+                          </p>
                         </div>
                       ) : (
-                        <div className="rounded-3xl border border-dashed border-slate-200 bg-white/70 px-6 py-8 text-sm text-slate-500">
-                          当前还没有模型消息记录。
+                        <div className="min-w-0">
+                          <h2 className="truncate text-lg font-semibold text-slate-900">
+                            {editorTitle}
+                          </h2>
+                          <p className="truncate text-sm text-slate-500">{editorPath}</p>
                         </div>
                       )}
+
+                      <button
+                        onClick={() => void handleSave()}
+                        disabled={saving || !editorDirty}
+                        className="rounded-full border border-blue-300 px-4 py-2 text-sm text-blue-700 transition hover:border-blue-500 hover:text-blue-900 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+                      >
+                        {saving ? 'Saving...' : 'Save'}
+                      </button>
                     </div>
-                  )}
+                  </div>
+
+                  <div className="min-h-0 flex-1">
+                    <Editor
+                      height="100%"
+                      path={editorPath}
+                      language={inferEditorLanguage(editorPath)}
+                      theme="vs"
+                      value={editorContent}
+                      onChange={(value) => {
+                        setEditorContent(value ?? '');
+                        setEditorDirty(true);
+                      }}
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        lineNumbers: 'on',
+                        wordWrap: 'on',
+                        roundedSelection: false,
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                      }}
+                    />
+                  </div>
                 </>
               )}
             </section>

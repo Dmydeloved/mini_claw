@@ -264,12 +264,12 @@ retriever = index.as_retriever(similarity_top_k=5)
    - Restart backend to reload skills
 
 2. **Modifying memory**:
-   - Edit `backend/memory/MEMORY.md` directly
+   - Edit `backend/workspace/memory/MEMORY.md` directly
    - Or use frontend editor (syncs via API)
 
 3. **Testing Agent**:
    - Use frontend chat interface
-   - Check `backend/memory/logs/` for conversation records
+   - Check `backend/workspace/memory/logs/` for conversation records
    - Monitor FastAPI logs for tool calls
 
 ---
@@ -287,7 +287,7 @@ OPENAI_BASE_URL=https://api.openrouter.ai/v1  # For OpenRouter
 MODEL_NAME=anthropic/claude-3.5-sonnet         # Model identifier
 
 # Paths
-MEMORY_DIR=./memory
+MEMORY_DIR=./workspace/memory
 SKILLS_DIR=./skills
 WORKSPACE_DIR=./workspace
 ```

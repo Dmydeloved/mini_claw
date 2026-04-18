@@ -18,6 +18,15 @@ from graph.agent_graph import MiniOpenClawAgent
 BACKEND_ROOT = Path(__file__).resolve().parent
 load_dotenv(BACKEND_ROOT / ".env", override=True)
 
+
+def _resolve_config_path(env_name: str, default: str) -> str:
+    """Resolve path-like environment variables relative to backend root."""
+    raw_value = os.getenv(env_name, default)
+    candidate = Path(raw_value)
+    if not candidate.is_absolute():
+        candidate = BACKEND_ROOT / candidate
+    return str(candidate.resolve())
+
 app = FastAPI(title="Mini-OpenClaw API", version="1.0.0")
 
 app.add_middleware(
@@ -41,6 +50,12 @@ use_responses_api = os.getenv("OPENAI_USE_RESPONSES_API", "false").strip().lower
     "yes",
     "on",
 }
+workspace_dir = _resolve_config_path("WORKSPACE_DIR", "./workspace")
+skills_dir = _resolve_config_path("SKILLS_DIR", "./skills")
+memory_dir = _resolve_config_path("MEMORY_DIR", "./workspace/memory")
+sessions_dir = _resolve_config_path("SESSIONS_DIR", "./workspace/sessions")
+knowledge_dir = _resolve_config_path("KNOWLEDGE_DIR", "./knowledge")
+storage_dir = _resolve_config_path("STORAGE_DIR", "./storage")
 
 if not api_key:
     raise ValueError("OPENAI_API_KEY not found in environment variables")
@@ -63,6 +78,12 @@ agent = MiniOpenClawAgent(
     default_headers=default_headers or None,
     use_responses_api=use_responses_api,
     root_dir=str(BACKEND_ROOT),
+    workspace_dir=workspace_dir,
+    skills_dir=skills_dir,
+    memory_dir=memory_dir,
+    sessions_dir=sessions_dir,
+    knowledge_dir=knowledge_dir,
+    storage_dir=storage_dir,
 )
 
 print("✓ Mini-OpenClaw Agent initialized")

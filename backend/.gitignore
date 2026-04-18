@@ -50,8 +50,8 @@ Thumbs.db
 # Storage
 backend/storage/
 backend/knowledge/
-backend/sessions/
-backend/memory/logs/
+backend/workspace/sessions/
+backend/workspace/memory/logs/
 
 # Keep MEMORY.md template
-!backend/memory/MEMORY.md
+!backend/workspace/memory/MEMORY.md

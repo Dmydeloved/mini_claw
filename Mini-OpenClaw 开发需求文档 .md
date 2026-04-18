@@ -130,7 +130,7 @@ System Prompt 由以下 6 部分动态拼接而成（按顺序）：
 ## 记忆协议
 ...
 ### 4. 会话存储 (Sessions)
-路径：backend/sessions/{session_name}.json
+路径：backend/workspace/sessions/{session_name}.json
 格式：标准 JSON 数组，包含 user , assistant , tool  (function calls) 类型的完整消息记录。
 ## 五、后端 API 接口规范 (FastAPI)
 后端服务作为独立进程运行，负责 Agent 逻辑、文件读写和状态管理。
@@ -149,7 +149,7 @@ Response: 支持 SSE (Server-Sent Events) 流式输出，实时推送 Agent 的�
 (Thought/Tool Calls) 和最终回复。
 ### 2. 文件管理接口 (用于前端编辑器)
 Endpoint: GET /api/files
-Query: path=memory/MEMORY.md
+Query: path=workspace/memory/MEMORY.md
 功能: 读取指定文件的内容。
 Endpoint: POST /api/files
 Body: { "path": "...", "content": "..." }
