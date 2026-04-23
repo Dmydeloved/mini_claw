@@ -11,6 +11,11 @@ export interface ChatResponse {
   session_id: string;
 }
 
+interface ChatStreamHandlers {
+  onDelta?: (chunk: string, fullReply: string) => void;
+  onSession?: (sessionId: string) => void;
+}
+
 export interface Skill {
   name: string;
   description: string;
@@ -95,6 +100,126 @@ export async function sendMessage(
       stream: false,
     }),
   });
+}
+
+function parseSseChunk(chunk: string): { event: string; data: string } | null {
+  const lines = chunk.split(/\r?\n/);
+  let event = 'message';
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) {
+      event = line.slice('event:'.length).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart());
+    }
+  }
+
+  if (!dataLines.length) {
+    return null;
+  }
+
+  return { event, data: dataLines.join('\n') };
+}
+
+export async function streamMessage(
+  message: string,
+  sessionId?: string,
+  handlers: ChatStreamHandlers = {}
+): Promise<ChatResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message,
+        session_id: sessionId,
+        stream: true,
+      }),
+    });
+  } catch {
+    throw new Error('Connection error: 无法连接后端服务，请确认 backend 已启动。');
+  }
+
+  if (!response.ok) {
+    let detail = '';
+
+    try {
+      const data = (await response.json()) as { detail?: string };
+      detail = data.detail || '';
+    } catch {
+      detail = '';
+    }
+
+    throw new Error(detail || `API error: ${response.status} ${response.statusText}`);
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming is not supported in the current browser.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let reply = '';
+  let resolvedSessionId = sessionId ?? '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    const chunks = buffer.split(/\r?\n\r?\n/);
+    buffer = chunks.pop() ?? '';
+
+    for (const chunk of chunks) {
+      const parsed = parseSseChunk(chunk);
+      if (!parsed) continue;
+
+      let payload: { content?: string; reply?: string; session_id?: string; detail?: string } = {};
+      try {
+        payload = JSON.parse(parsed.data) as typeof payload;
+      } catch {
+        payload = {};
+      }
+
+      if (parsed.event === 'session' && payload.session_id) {
+        resolvedSessionId = payload.session_id;
+        handlers.onSession?.(payload.session_id);
+      }
+
+      if (parsed.event === 'delta' && payload.content) {
+        reply += payload.content;
+        handlers.onDelta?.(payload.content, reply);
+      }
+
+      if (parsed.event === 'error') {
+        throw new Error(payload.detail || 'Stream error');
+      }
+
+      if (parsed.event === 'done') {
+        return {
+          reply: payload.reply ?? reply,
+          session_id: payload.session_id ?? resolvedSessionId,
+        };
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  return {
+    reply,
+    session_id: resolvedSessionId,
+  };
 }
 
 export async function getSkills(): Promise<Skill[]> {

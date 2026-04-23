@@ -1,0 +1,23 @@
+{
+  "topic_id": "finance-analysis-是",
+  "domain": "finance_analysis",
+  "topic": "是",
+  "intents": [
+    "general"
+  ],
+  "keywords": [],
+  "summaries": [
+    "user=是; assistant=抱歉，当前请求接口在获取近一周的K线数据时遇到了网络或接口响应问题，导致上证指数、深证成指和沪深300这三个主要指数的近一周行情数据未能成功获取。 不过，这些返回结果显示接口正常响应，只是未返回具体的K线数据，可能接口时间参数或调用方式有误。 您是否需要我尝试用其他方式或工具帮您总结近一周大盘的行情走势？或者您有其他特定股票或指数想了解近一周的走势？; tools=fetch_url",
+    "topic=是; intents=general; turns=1; keywords=n/a; recap=user=是; assistant=抱歉，当前请求接口在获取近一周的K线数据时遇到了网络或接口响应问题，导致上证指数、深证成指和沪深300这三个主要指数的近一周行情数据未能成功获取。 不过，这些返回结果显示接口正常响应，只是未返回具体的K线数据，可能接口时间参数或调用方式有误。 您是否需要我尝试用其他方式或工具帮您总结近一周大盘的行情走势？或者您有其他特定股票或指数想了解近一周的走势？; tools=fetch_url"
+  ],
+  "tool_patterns": [
+    "fetch_url"
+  ],
+  "related_sessions": [
+    "20260419_213953"
+  ],
+  "importance": 0.66,
+  "reuse_count": 6,
+  "created_at": "2026-04-19T22:00:53.877416",
+  "updated_at": "2026-04-19T22:14:44.502934"
+}

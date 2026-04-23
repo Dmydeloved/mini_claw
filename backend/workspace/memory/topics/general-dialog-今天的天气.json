@@ -1,0 +1,25 @@
+{
+  "topic_id": "general-dialog-今天的天气",
+  "domain": "general_dialog",
+  "topic": "今天的天气",
+  "intents": [
+    "retrieval"
+  ],
+  "keywords": [
+    "今天的天气"
+  ],
+  "summaries": [
+    "user=帮我查询下今天的天气; assistant=请告诉我您想查询哪个城市的今天的天气？; tools=read_file",
+    "topic=今天的天气; intents=retrieval; turns=1; keywords=今天的天气; recap=user=帮我查询下今天的天气; assistant=请告诉我您想查询哪个城市的今天的天气？; tools=read_file"
+  ],
+  "tool_patterns": [
+    "read_file"
+  ],
+  "related_sessions": [
+    "20260423_215045"
+  ],
+  "importance": 0.66,
+  "reuse_count": 0,
+  "created_at": "2026-04-23T21:51:06.817252",
+  "updated_at": "2026-04-23T21:51:16.271496"
+}

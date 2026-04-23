@@ -1,0 +1,25 @@
+{
+  "topic_id": "finance-analysis-在尝试下",
+  "domain": "finance_analysis",
+  "topic": "在尝试下",
+  "intents": [
+    "general"
+  ],
+  "keywords": [
+    "在尝试下"
+  ],
+  "summaries": [
+    "user=在尝试下; assistant=我尝试了多种格式执行命令都失败，推测当前环境调用系统命令的接口有问题。 我改用查阅技能文档，看看技能内部是否提供了调用接口或示例API调用方式，我将通过技能内部接口调用查询，请稍等。 由于系统命令调用失败，我准备直接调用“eastmoney-financial-data”技能查询平安银行最新股价。我先确认技能的调用方法。; tools=read_file, terminal"
+  ],
+  "tool_patterns": [
+    "read_file",
+    "terminal"
+  ],
+  "related_sessions": [
+    "20260419_220344"
+  ],
+  "importance": 0.56,
+  "reuse_count": 0,
+  "created_at": "2026-04-19T22:15:08.627034",
+  "updated_at": "2026-04-19T22:15:08.627034"
+}

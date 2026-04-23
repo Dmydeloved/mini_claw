@@ -1,0 +1,24 @@
+{
+  "topic_id": "finance-analysis-再次尝试下",
+  "domain": "finance_analysis",
+  "topic": "再次尝试下",
+  "intents": [
+    "general"
+  ],
+  "keywords": [
+    "再次尝试下"
+  ],
+  "summaries": [
+    "user=再次尝试下; assistant=我已查看“eastmoney-financial-data”技能的描述，支持查询包括股票最新价等行情类数据。 请确认您要查询的股票代码是平安银行A股代码“000001”吗？（注意“000001”是上证指数代码，平安银行正确A股代码是“000001”吗？） 如果需要，我可以帮您先确认平安银行的正确股票代码，再使用该技能帮您查询最新股价，请告诉我您的具体需求。; tools=read_file"
+  ],
+  "tool_patterns": [
+    "read_file"
+  ],
+  "related_sessions": [
+    "20260419_220344"
+  ],
+  "importance": 0.56,
+  "reuse_count": 0,
+  "created_at": "2026-04-19T22:09:35.469863",
+  "updated_at": "2026-04-19T22:09:35.469863"
+}

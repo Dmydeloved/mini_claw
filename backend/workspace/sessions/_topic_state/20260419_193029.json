@@ -1,0 +1,37 @@
+{
+  "session_id": "20260419_193029",
+  "current_topic": {
+    "domain": "general_dialog",
+    "topic": "沈阳",
+    "intents": [
+      "general"
+    ],
+    "keywords": [
+      "沈阳"
+    ],
+    "confidence": 0.48
+  },
+  "slices": [
+    {
+      "slice_id": "general-dialog-帮我查询下天气-1",
+      "topic_id": "general-dialog-帮我查询下天气",
+      "domain": "general_dialog",
+      "topic": "帮我查询下天气",
+      "intents": [
+        "general"
+      ],
+      "keywords": [
+        "帮我查询下天气",
+        "沈阳"
+      ],
+      "summary": "user=帮我查询下天气; assistant=请告诉我您想查询哪个城市的天气？ | user=沈阳; assistant=沈阳当前的天气是：晴，气温约22°C。如果您需要更详细的天气信息或者未来的天气预报，请告诉我。; tools=read_file, terminal, fetch_url",
+      "turn_count": 2,
+      "status": "active",
+      "started_at": "2026-04-19T19:30:43.658750",
+      "updated_at": "2026-04-19T19:31:00.899938",
+      "closed_at": null,
+      "finalized_summary": ""
+    }
+  ],
+  "updated_at": "2026-04-19T19:31:00.899938"
+}

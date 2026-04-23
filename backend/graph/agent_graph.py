@@ -7,6 +7,7 @@ memory, skills, session, and snapshot architecture.
 import json
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,8 +28,23 @@ from tools import (
     create_terminal_tool,
     create_write_file_tool,
 )
+from graph.context_selector import TopicContextSelector, TopicSessionContext
+from graph.experience_miner import ExperienceMiner
 from graph.memory import MemoryManager, Message
 from graph.skills import SkillManager
+from graph.topic_memory_manager import TopicMemoryManager, TopicPromptContext
+
+
+@dataclass
+class PromptLayers:
+    """Explicit prompt-engineering layers used to build one model call."""
+
+    system: Dict[str, str]
+    skills: Dict[str, Any]
+    tools: Dict[str, Any]
+    topic_memory: Dict[str, Any]
+    session: Dict[str, Any]
+    user: Dict[str, Any]
 
 
 class MiniOpenClawAgent:
@@ -111,6 +127,12 @@ class MiniOpenClawAgent:
             sessions_dir=self.sessions_dir,
             workspace_dir=self.workspace_dir,
         )
+        self.topic_memory_manager = TopicMemoryManager(
+            memory_dir=self.memory_dir,
+            sessions_dir=self.sessions_dir,
+        )
+        self.experience_miner = ExperienceMiner(memory_dir=self.memory_dir)
+        self.context_selector = TopicContextSelector()
         self.skill_manager.write_snapshot(self.workspace_dir)
 
         # Create model interface with tool binding
@@ -165,17 +187,20 @@ class MiniOpenClawAgent:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
 
+    def _strip_markdown_title(self, content: str) -> str:
+        """Remove the first markdown title to avoid repeated headings in composite sections."""
+        normalized = (content or "").strip()
+        return re.sub(r"^# .*\n+", "", normalized, count=1).strip()
+
     def _build_tool_definitions(self) -> str:
-        """Build a compact prompt-visible tool guide."""
+        """Build a compact prompt-visible tool policy without duplicating bind schema."""
         lines = [
             "Tools are already bound natively to the model.",
             "Use actual tool calls instead of describing pseudo-calls in plain text.",
-            "",
-            "Available tools:",
+            "Do not invent tools or tool arguments.",
+            "Prefer tool results over unsupported assumptions.",
+            "Use `read_file` to inspect skill files before relying on a skill.",
         ]
-
-        for tool in self.tools:
-            lines.append(f"- {tool.name}: {tool.description.strip()}")
 
         return "\n".join(lines).strip()
 
@@ -185,6 +210,8 @@ class MiniOpenClawAgent:
         user_message: Optional[str],
         loop_messages: Optional[List[Message]] = None,
         iteration: int = 0,
+        topic_prompt_context: Optional[TopicPromptContext] = None,
+        session_context: Optional[TopicSessionContext] = None,
     ) -> str:
         """Build volatile runtime context included before each model call."""
         loop_messages = loop_messages or []
@@ -203,6 +230,40 @@ class MiniOpenClawAgent:
         tool_result_count = sum(1 for msg in loop_messages if msg.role == "tool")
         if tool_result_count:
             lines.append(f"- tool_results_collected_in_current_turn: {tool_result_count}")
+
+        if topic_prompt_context:
+            lines.append(
+                "- prompt_new_session_detected: "
+                f"{'true' if topic_prompt_context.is_new_session else 'false'}"
+            )
+            if topic_prompt_context.transition_notes:
+                lines.append(
+                    "- prompt_flow_actions: "
+                    f"{', '.join(topic_prompt_context.transition_notes)}"
+                )
+
+        if session_context:
+            lines.append(f"- session_context_strategy: {session_context.strategy}")
+            lines.append(
+                "- session_original_messages: "
+                f"{session_context.original_message_count}"
+            )
+            lines.append(
+                "- session_selected_messages: "
+                f"{session_context.selected_message_count}"
+            )
+            lines.append(
+                "- session_prompt_messages: "
+                f"{session_context.prompt_message_count}"
+            )
+            lines.append(
+                "- session_selection_applied: "
+                f"{'true' if session_context.selection_applied else 'false'}"
+            )
+            lines.append(
+                "- session_compression_applied: "
+                f"{'true' if session_context.compression_applied else 'false'}"
+            )
 
         embedded_skill_draft = self._inspect_embedded_skill_draft(user_message)
         if embedded_skill_draft:
@@ -224,65 +285,156 @@ class MiniOpenClawAgent:
 
         return "\n".join(lines)
 
-    def _build_memory_context(self) -> str:
+    def _build_memory_context(self, session_id: Optional[str] = None) -> str:
         """Build the prompt-visible memory context injected into the system prompt."""
         memory_content = self.memory_manager.get_memory_content()
-        recent_activity = self.memory_manager.get_recent_activity_summary()
+        recent_activity = self.memory_manager.get_recent_activity_summary(
+            exclude_session_id=session_id
+        )
         return (
-            "## Core Memory\n\n"
+            "## Persistent User Memory\n\n"
             f"{memory_content}\n\n"
-            "## Recent Activity Summary\n\n"
+            "## Other Recent Sessions\n\n"
             f"{recent_activity}"
         )
 
-    def _build_system_prompt(self, extra_context: Optional[str] = None) -> str:
-        """Build the full OpenClaw-style prompt scaffold before every LLM call."""
+    def _build_role_context(self) -> str:
+        """Build a concise role section from persona-related workspace files."""
+        soul = self._strip_markdown_title(
+            self._read_workspace_file(
+                "SOUL.md",
+                "You are Mini-OpenClaw, a transparent local-first AI assistant.",
+            )
+        )
+        identity = self._strip_markdown_title(
+            self.memory_manager.get_workspace_file("IDENTITY.md")
+        )
+        user_profile = self._strip_markdown_title(
+            self.memory_manager.get_workspace_file("USER.md")
+        )
+
+        parts = ["## Soul", soul]
+        if identity:
+            parts.extend(["", "## Identity", identity])
+        if user_profile:
+            parts.extend(["", "## User Profile", user_profile])
+        return "\n".join(part for part in parts if part is not None).strip()
+
+    def _build_execution_rules(self) -> str:
+        """Build consolidated execution rules to replace overlapping prompt sections."""
+        agents_rules = self._strip_markdown_title(
+            self.memory_manager.get_workspace_file("AGENTS.md")
+        )
+        loop_rules = (
+            "## Autonomous Loop\n"
+            "1. Before every answer, rely on the prompt you were given in this call.\n"
+            "2. If you need external information or file contents, emit tool calls instead of stopping early.\n"
+            "3. After tool results are returned, continue the task automatically from the updated context.\n"
+            "4. Only provide the final natural-language answer when no further tool call is necessary.\n"
+            "5. Base conclusions on files and tool results, and distinguish facts from inference.\n"
+            "6. When working with skills, first read `workspace/SKILLS_SNAPSHOT.md`, then read the target `SKILL.md`.\n"
+            "7. When asked to create or update a skill, write a valid `skills/<skill_name>/SKILL.md`."
+        )
+        parts = ["## Project Rules", agents_rules, "", loop_rules]
+        return "\n".join(part for part in parts if part is not None).strip()
+
+    def _build_prompt_layers(
+        self,
+        session_id: Optional[str],
+        topic_memory_context: Optional[str],
+        runtime_context: Optional[str],
+        session_context: Optional[TopicSessionContext],
+        user_message: Optional[str],
+    ) -> PromptLayers:
+        """Build explicit prompt layers so the engineering structure is easy to inspect and evolve."""
         self.skill_manager.reload_skills(verbose=False)
         self.skill_manager.write_snapshot(self.workspace_dir)
 
+        # The first four layers are rendered into the actual system message.
+        system_layer = {
+            "role_context": self._build_role_context(),
+            "execution_rules": self._build_execution_rules(),
+            "memory_context": self._build_memory_context(session_id=session_id),
+        }
+        skills_layer = {
+            "summary": self.skill_manager.build_skills_prompt(),
+        }
+        tools_layer = {
+            "policy": self._build_tool_definitions(),
+            "tool_bind_active": True,
+        }
+        topic_memory_layer = {
+            "content": topic_memory_context or "No topic memory context available.",
+        }
+
+        # Session stays outside the system block because it is the most dynamic layer.
+        session_layer = {
+            "runtime": runtime_context or "",
+            "strategy": session_context.strategy if session_context else "none",
+            "selection_applied": session_context.selection_applied if session_context else False,
+            "compression_applied": session_context.compression_applied if session_context else False,
+            "selected_history": [
+                self._serialize_session_message(msg)
+                for msg in (session_context.prompt_history if session_context else [])
+            ],
+        }
+        user_layer = {
+            "current_message": user_message or "",
+        }
+
+        return PromptLayers(
+            system=system_layer,
+            skills=skills_layer,
+            tools=tools_layer,
+            topic_memory=topic_memory_layer,
+            session=session_layer,
+            user=user_layer,
+        )
+
+    def _serialize_session_message(self, msg: Message) -> Dict[str, Any]:
+        """Convert one persisted message into a compact prompt-layer preview payload."""
+        payload: Dict[str, Any] = {
+            "role": msg.role,
+            "content": self._truncate_component(msg.content, max_chars=600),
+        }
+        if msg.name:
+            payload["name"] = msg.name
+        if msg.tool_calls:
+            payload["tool_calls"] = msg.tool_calls
+        return payload
+
+    def _build_system_prompt(
+        self,
+        prompt_layers: PromptLayers,
+    ) -> str:
+        """Render the system-facing layers into the single system message sent to the model."""
         sections = [
             (
-                "SOUL.md",
-                self._read_workspace_file(
-                    "SOUL.md", "You are Mini-OpenClaw, a transparent local-first AI assistant."
-                ),
+                "SYSTEM.md",
+                "\n\n".join(
+                    [
+                        "## Role Context",
+                        prompt_layers.system.get("role_context", ""),
+                        "",
+                        "## Execution Rules",
+                        prompt_layers.system.get("execution_rules", ""),
+                        "",
+                        "## Memory Context",
+                        prompt_layers.system.get("memory_context", ""),
+                    ]
+                ).strip(),
             ),
-            ("IDENTITY.md", self.memory_manager.get_workspace_file("IDENTITY.md")),
-            ("USER.md", self.memory_manager.get_workspace_file("USER.md")),
-            ("AGENTS.md", self.memory_manager.get_workspace_file("AGENTS.md")),
-            ("SKILLS_SUMMARY.md", self.skill_manager.build_skills_prompt()),
-            ("TOOLS_AND_FUNCTIONS.md", self._build_tool_definitions()),
-            ("RETRIEVED_MEMORY.md", self._build_memory_context()),
+            ("SKILLS.md", str(prompt_layers.skills.get("summary", ""))),
+            ("TOOLS.md", str(prompt_layers.tools.get("policy", ""))),
         ]
 
-        if extra_context:
-            sections.append(("CURRENT_CONTEXT.md", extra_context))
+        topic_context = str(prompt_layers.topic_memory.get("content", "")).strip()
+        if topic_context:
+            sections.append(("TOPIC_MEMORY.md", topic_context))
 
-        sections.append(
-            (
-                "AUTONOMOUS_AGENT_LOOP.md",
-                (
-                    "You are running in fully autonomous agent mode.\n\n"
-                    "Rules:\n"
-                    "1. Before every answer, rely on the prompt you were given in this call: "
-                    "system prompt, all skills, all tools/functions, memory, history, context, and the user query.\n"
-                    "2. If you need external information or file contents, emit tool calls instead of stopping early.\n"
-                    "3. After tool results are returned, continue the task automatically from the updated context.\n"
-                    "4. Only provide the final natural-language answer when no further tool call is necessary.\n"
-                    "5. Follow the skill protocol strictly: the prompt only contains each skill's name and description. "
-                    "If you need to use a skill, first read `workspace/SKILLS_SNAPSHOT.md` to locate it, then read the skill file with `read_file`.\n"
-                    "6. Base conclusions on files and tool results, and distinguish facts from inference.\n"
-                    "7. When the user asks to add, create, save, or update a skill, first use the "
-                    "dedicated skill-authoring workflow if available, then use `write_file` to create "
-                    "or update `skills/<skill_name>/SKILL.md` instead of only describing the plan.\n"
-                    "8. A valid `SKILL.md` file must contain YAML frontmatter with at least "
-                    "`name` and `description`. `trigger` is optional and only serves as a routing hint. "
-                    "Add `enabled: true` unless the user requests otherwise.\n"
-                    "9. If the user supplied only a partial skill draft, first transform it into a valid `SKILL.md`, "
-                    "then write the file."
-                ),
-            )
-        )
+        runtime_context = str(prompt_layers.session.get("runtime", "")).strip()
+        if runtime_context:
+            sections.append(("RUNTIME.md", runtime_context))
 
         rendered_sections = []
         for filename, content in sections:
@@ -526,6 +678,20 @@ class MiniOpenClawAgent:
             return f"[Tool `{tool_name}` Result]\n{content}"
         return f"[Tool Result]\n{content}"
 
+    def _append_tool_summary_if_missing(self, content: str, summary: str) -> str:
+        """Avoid duplicating tool-call summaries when content already contains them."""
+        normalized_content = (content or "").strip()
+        normalized_summary = (summary or "").strip()
+        if not normalized_summary:
+            return normalized_content
+        if not normalized_content:
+            return normalized_summary
+        if normalized_summary in normalized_content:
+            return normalized_content
+        if normalized_content.startswith("[Tool Calls]"):
+            return normalized_content
+        return f"{normalized_content}\n\n{normalized_summary}".strip()
+
     def _summarize_tool_content_for_history(self, msg: Message) -> str:
         """Compress verbose tool outputs before replaying them into model history."""
         tool_name = msg.name or (msg.tool_calls[0].get("name") if msg.tool_calls else None) or "tool"
@@ -645,9 +811,7 @@ class MiniOpenClawAgent:
                 if tool_calls:
                     payload["tool_calls"] = tool_calls
                     summary = self._format_tool_calls_summary(tool_calls)
-                    payload["content"] = (
-                        f"{content}\n\n{summary}".strip() if content else summary
-                    )
+                    payload["content"] = self._append_tool_summary_if_missing(content, summary)
 
             if role == "tool":
                 tool_name = getattr(message, "name", None)
@@ -678,7 +842,11 @@ class MiniOpenClawAgent:
 
         return sections
 
-    def _build_prompt_preview(self, raw_messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_prompt_preview(
+        self,
+        raw_messages: List[Dict[str, Any]],
+        prompt_layers: Optional[PromptLayers] = None,
+    ) -> Dict[str, Any]:
         """Build a structured preview of the prompt for easier inspection."""
         system_message = next(
             (message for message in raw_messages if message.get("role") == "system"),
@@ -694,21 +862,124 @@ class MiniOpenClawAgent:
                 current_user_message = str(message.get("content", ""))
                 break
 
+        current_turn_start = None
+        for index in range(len(conversation_messages) - 1, -1, -1):
+            message = conversation_messages[index]
+            if message.get("role") == "user" and str(message.get("content", "")).strip():
+                current_turn_start = index
+                break
+
+        current_turn_messages = (
+            conversation_messages[current_turn_start:]
+            if current_turn_start is not None
+            else []
+        )
+        session_history_messages = (
+            conversation_messages[:current_turn_start]
+            if current_turn_start is not None
+            else conversation_messages
+        )
+
+        structured_prompt = (
+            {
+                "system": prompt_layers.system,
+                "skills": prompt_layers.skills,
+                "tools": prompt_layers.tools,
+                "topic_memory": prompt_layers.topic_memory,
+                "session": {
+                    **prompt_layers.session,
+                    "current_turn": current_turn_messages,
+                },
+                "user": prompt_layers.user,
+            }
+            if prompt_layers
+            else {
+                "system": {
+                    "content": section_map.get("SYSTEM.md", ""),
+                },
+                "skills": {
+                    "summary": section_map.get("SKILLS.md", ""),
+                },
+                "tools": {
+                    "policy": section_map.get("TOOLS.md", ""),
+                    "tool_bind_active": True,
+                },
+                "topic_memory": {
+                    "content": section_map.get("TOPIC_MEMORY.md", ""),
+                },
+                "session": {
+                    "runtime": section_map.get("RUNTIME.md", ""),
+                    "selected_history": session_history_messages,
+                    "current_turn": current_turn_messages,
+                },
+                "user": {
+                    "current_message": current_user_message,
+                },
+            }
+        )
+
         return {
             "system_sections": system_sections,
             "persona_sections": [
                 section
                 for section in system_sections
-                if section["name"] in {"SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md"}
+                if section["name"] in {"SYSTEM.md"}
             ],
-            "skills_summary": section_map.get("SKILLS_SUMMARY.md", ""),
-            "tools_and_functions": section_map.get("TOOLS_AND_FUNCTIONS.md", ""),
-            "retrieved_memory": section_map.get("RETRIEVED_MEMORY.md", ""),
-            "current_context": section_map.get("CURRENT_CONTEXT.md", ""),
-            "autonomous_agent_loop": section_map.get("AUTONOMOUS_AGENT_LOOP.md", ""),
+            "skills_summary": section_map.get("SKILLS.md", ""),
+            "tools_and_functions": section_map.get("TOOLS.md", ""),
+            "retrieved_memory": section_map.get("SYSTEM.md", ""),
+            "topic_memory": section_map.get("TOPIC_MEMORY.md", ""),
+            "current_context": section_map.get("RUNTIME.md", ""),
+            "autonomous_agent_loop": section_map.get("SYSTEM.md", ""),
             "current_user_message": current_user_message,
             "conversation_messages": conversation_messages,
+            "structured_prompt": structured_prompt,
         }
+
+    def _build_raw_prompt_payload(
+        self,
+        session_id: str,
+        raw_messages: List[Dict[str, Any]],
+        prompt_layers: Optional[PromptLayers] = None,
+        updated_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build the stored/raw API payload with explicit top-level prompt layers."""
+        prompt_preview = self._build_prompt_preview(raw_messages, prompt_layers=prompt_layers)
+        structured_prompt = prompt_preview.get("structured_prompt", {})
+
+        return {
+            "session_id": session_id,
+            "updated_at": updated_at or datetime.now().isoformat(),
+            "message_count": len(raw_messages),
+            "messages": raw_messages,
+            "system": structured_prompt.get("system", {}),
+            "skills": structured_prompt.get("skills", {}),
+            "tools": structured_prompt.get("tools", {}),
+            "topic_memory": structured_prompt.get("topic_memory", {}),
+            "session": structured_prompt.get("session", {}),
+            "user": structured_prompt.get("user", {}),
+            "prompt_preview": prompt_preview,
+        }
+
+    def _hydrate_raw_prompt_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Backfill the new top-level prompt layers for old raw snapshots."""
+        hydrated = dict(payload or {})
+        messages = hydrated.get("messages") or []
+        prompt_preview = hydrated.get("prompt_preview") or {}
+
+        if not prompt_preview and messages:
+            prompt_preview = self._build_prompt_preview(messages)
+            hydrated["prompt_preview"] = prompt_preview
+
+        structured_prompt = prompt_preview.get("structured_prompt", {}) if isinstance(prompt_preview, dict) else {}
+        for key in ("system", "skills", "tools", "topic_memory", "session", "user"):
+            hydrated[key] = hydrated.get(key) or structured_prompt.get(key, {})
+
+        hydrated.setdefault("session_id", "")
+        hydrated.setdefault("updated_at", "")
+        hydrated["message_count"] = len(messages)
+        hydrated["messages"] = messages
+        return hydrated
 
     def _build_prompt_messages(
         self,
@@ -856,23 +1127,54 @@ class MiniOpenClawAgent:
             Message(role="user", content=user_message, timestamp=timestamp)
         ]
         final_reply = ""
+        topic_prompt_context = self.topic_memory_manager.build_prompt_context(
+            session_id=session_id,
+            user_message=user_message,
+            history=history,
+            prepare_state=True,
+        )
+        session_context = self.context_selector.build_session_context(
+            history=history,
+            analysis=topic_prompt_context.analysis,
+        )
 
         for iteration in range(self.max_tool_iterations):
-            system_prompt = self._build_system_prompt(
-                extra_context=self._build_runtime_context(
-                    session_id=session_id,
-                    user_message=user_message,
-                    loop_messages=turn_messages,
-                    iteration=iteration,
-                )
+            runtime_context = self._build_runtime_context(
+                session_id=session_id,
+                user_message=user_message,
+                loop_messages=turn_messages,
+                iteration=iteration,
+                topic_prompt_context=topic_prompt_context,
+                session_context=session_context,
             )
-            combined_history = [*history, *turn_messages]
+            prompt_layers = self._build_prompt_layers(
+                session_id=session_id,
+                topic_memory_context=topic_prompt_context.rendered,
+                runtime_context=runtime_context,
+                session_context=session_context,
+                user_message=user_message,
+            )
+            system_prompt = self._build_system_prompt(prompt_layers=prompt_layers)
+            combined_history = [*session_context.prompt_history, *turn_messages]
             prompt_messages = self._build_prompt_messages(system_prompt, combined_history)
             raw_messages = self._serialize_prompt_messages(prompt_messages)
+            raw_prompt_payload = self._build_raw_prompt_payload(
+                session_id=session_id,
+                raw_messages=raw_messages,
+                prompt_layers=prompt_layers,
+            )
             self.memory_manager.save_raw_messages(
                 session_id,
                 raw_messages,
-                prompt_preview=self._build_prompt_preview(raw_messages),
+                prompt_preview=raw_prompt_payload["prompt_preview"],
+                prompt_layers={
+                    "system": raw_prompt_payload["system"],
+                    "skills": raw_prompt_payload["skills"],
+                    "tools": raw_prompt_payload["tools"],
+                    "topic_memory": raw_prompt_payload["topic_memory"],
+                    "session": raw_prompt_payload["session"],
+                    "user": raw_prompt_payload["user"],
+                },
             )
 
             response = self._invoke_model(prompt_messages)
@@ -951,6 +1253,19 @@ class MiniOpenClawAgent:
         # Save to session
         updated_history = [*history, *turn_messages]
         self.memory_manager.save_session(session_id, updated_history)
+        topic_update = self.topic_memory_manager.remember_turn(
+            session_id=session_id,
+            user_message=message,
+            assistant_reply=reply,
+            turn_messages=turn_messages,
+        )
+        self.experience_miner.record_turn(
+            session_id=session_id,
+            user_message=message,
+            assistant_reply=reply,
+            turn_messages=turn_messages,
+            topic_update=topic_update,
+        )
 
         # Save to daily log
         self.memory_manager.save_to_daily_log(turn_messages)
@@ -962,14 +1277,47 @@ class MiniOpenClawAgent:
         session_id = self.memory_manager.create_new_session()
         self.memory_manager.save_session(session_id, [])
 
-        system_prompt = self._build_system_prompt(
-            extra_context=self._build_runtime_context(session_id=session_id, user_message=None)
+        topic_prompt_context = self.topic_memory_manager.build_prompt_context(
+            session_id=session_id,
+            user_message=None,
+            history=[],
         )
+        session_context = self.context_selector.build_session_context(
+            history=[],
+            analysis=topic_prompt_context.analysis,
+        )
+        runtime_context = self._build_runtime_context(
+            session_id=session_id,
+            user_message=None,
+            topic_prompt_context=topic_prompt_context,
+            session_context=session_context,
+        )
+        prompt_layers = self._build_prompt_layers(
+            session_id=session_id,
+            topic_memory_context=topic_prompt_context.rendered,
+            runtime_context=runtime_context,
+            session_context=session_context,
+            user_message=None,
+        )
+        system_prompt = self._build_system_prompt(prompt_layers=prompt_layers)
         raw_messages = self._build_raw_messages(system_prompt, [])
+        raw_prompt_payload = self._build_raw_prompt_payload(
+            session_id=session_id,
+            raw_messages=raw_messages,
+            prompt_layers=prompt_layers,
+        )
         self.memory_manager.save_raw_messages(
             session_id,
             raw_messages,
-            prompt_preview=self._build_prompt_preview(raw_messages),
+            prompt_preview=raw_prompt_payload["prompt_preview"],
+            prompt_layers={
+                "system": raw_prompt_payload["system"],
+                "skills": raw_prompt_payload["skills"],
+                "tools": raw_prompt_payload["tools"],
+                "topic_memory": raw_prompt_payload["topic_memory"],
+                "session": raw_prompt_payload["session"],
+                "user": raw_prompt_payload["user"],
+            },
         )
 
         return {"session_id": session_id}
@@ -999,37 +1347,72 @@ class MiniOpenClawAgent:
 
     def get_raw_messages(self, session_id: str) -> Dict:
         """Get the latest raw prompt payload for a session."""
-        payload = self.memory_manager.load_raw_messages(session_id)
+        payload = self._hydrate_raw_prompt_payload(
+            self.memory_manager.load_raw_messages(session_id)
+        )
         if payload.get("messages"):
-            if not payload.get("prompt_preview"):
-                payload["prompt_preview"] = self._build_prompt_preview(payload["messages"])
             return payload
 
         history = self.memory_manager.load_session(session_id)
-        system_prompt = self._build_system_prompt(
-            extra_context=self._build_runtime_context(session_id=session_id, user_message=None)
+        topic_prompt_context = self.topic_memory_manager.build_prompt_context(
+            session_id=session_id,
+            user_message=None,
+            history=history,
         )
-        preview_messages = self._build_raw_messages(system_prompt, history)
-        return {
-            "session_id": session_id,
-            "updated_at": datetime.now().isoformat(),
-            "message_count": len(preview_messages),
-            "messages": preview_messages,
-            "prompt_preview": self._build_prompt_preview(preview_messages),
-        }
+        session_context = self.context_selector.build_session_context(
+            history=history,
+            analysis=topic_prompt_context.analysis,
+        )
+        runtime_context = self._build_runtime_context(
+            session_id=session_id,
+            user_message=None,
+            topic_prompt_context=topic_prompt_context,
+            session_context=session_context,
+        )
+        prompt_layers = self._build_prompt_layers(
+            session_id=session_id,
+            topic_memory_context=topic_prompt_context.rendered,
+            runtime_context=runtime_context,
+            session_context=session_context,
+            user_message=None,
+        )
+        system_prompt = self._build_system_prompt(prompt_layers=prompt_layers)
+        preview_messages = self._build_raw_messages(system_prompt, session_context.prompt_history)
+        return self._build_raw_prompt_payload(
+            session_id=session_id,
+            raw_messages=preview_messages,
+            prompt_layers=prompt_layers,
+        )
 
     def preview_raw_messages(self, session_id: Optional[str] = None) -> Dict:
         """Preview the current prompt payload even before the next user message is sent."""
         history = self.memory_manager.load_session(session_id) if session_id else []
-        system_prompt = self._build_system_prompt(
-            extra_context=self._build_runtime_context(session_id=session_id, user_message=None)
+        topic_prompt_context = self.topic_memory_manager.build_prompt_context(
+            session_id=session_id,
+            user_message=None,
+            history=history,
         )
-        preview_messages = self._build_raw_messages(system_prompt, history)
-
-        return {
-            "session_id": session_id or "",
-            "updated_at": datetime.now().isoformat(),
-            "message_count": len(preview_messages),
-            "messages": preview_messages,
-            "prompt_preview": self._build_prompt_preview(preview_messages),
-        }
+        session_context = self.context_selector.build_session_context(
+            history=history,
+            analysis=topic_prompt_context.analysis,
+        )
+        runtime_context = self._build_runtime_context(
+            session_id=session_id,
+            user_message=None,
+            topic_prompt_context=topic_prompt_context,
+            session_context=session_context,
+        )
+        prompt_layers = self._build_prompt_layers(
+            session_id=session_id,
+            topic_memory_context=topic_prompt_context.rendered,
+            runtime_context=runtime_context,
+            session_context=session_context,
+            user_message=None,
+        )
+        system_prompt = self._build_system_prompt(prompt_layers=prompt_layers)
+        preview_messages = self._build_raw_messages(system_prompt, session_context.prompt_history)
+        return self._build_raw_prompt_payload(
+            session_id=session_id or "",
+            raw_messages=preview_messages,
+            prompt_layers=prompt_layers,
+        )

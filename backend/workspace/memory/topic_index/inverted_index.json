@@ -1,0 +1,204 @@
+{
+  "keywords": {
+    "再帮我查询下北京的天气": [
+      "general-dialog-再帮我查询下北京的天气"
+    ],
+    "哈尔滨": [
+      "general-dialog-哈尔滨"
+    ],
+    "帮我查询下天气": [
+      "general-dialog-帮我查询下天气"
+    ],
+    "我想了解下近一周的": [
+      "general-dialog-我想了解下近一周的-股信息"
+    ],
+    "股信息": [
+      "general-dialog-我想了解下近一周的-股信息"
+    ],
+    "行情": [
+      "finance-analysis-a股-行情-再重新常使下查询",
+      "finance-analysis-行情-大盘近一周的整体行情"
+    ],
+    "a股": [
+      "finance-analysis-a股-行情-再重新常使下查询",
+      "finance-analysis-a股-大盘-eastmoney-financial-data",
+      "finance-analysis-a股-大盘-今天",
+      "finance-analysis-a股-大盘-大盘近一周大盘",
+      "finance-analysis-a股-大盘-大盘近一周",
+      "finance-analysis-a股-大盘-大盘情况如何"
+    ],
+    "大盘": [
+      "finance-analysis-a股-大盘-eastmoney-financial-data",
+      "finance-analysis-大盘-涨跌-大盘涨跌幅",
+      "finance-analysis-a股-大盘-今天",
+      "finance-analysis-a股-大盘-大盘近一周大盘",
+      "finance-analysis-a股-大盘-大盘近一周",
+      "finance-analysis-a股-大盘-大盘情况如何"
+    ],
+    "大盘近一周": [
+      "finance-analysis-a股-大盘-eastmoney-financial-data",
+      "finance-analysis-a股-大盘-大盘近一周"
+    ],
+    "将问题进行返回": [
+      "finance-analysis-将问题进行返回-如果遇到问题-再次尝试"
+    ],
+    "如果遇到问题": [
+      "finance-analysis-将问题进行返回-如果遇到问题-再次尝试"
+    ],
+    "再次尝试": [
+      "finance-analysis-将问题进行返回-如果遇到问题-再次尝试"
+    ],
+    "大盘近一周大盘": [
+      "finance-analysis-a股-大盘-eastmoney-financial-data",
+      "finance-analysis-a股-大盘-大盘近一周大盘"
+    ],
+    "银行": [
+      "finance-analysis-银行-查询平安银行最新价",
+      "finance-analysis-银行-查看平安银行最新股价-确认",
+      "finance-analysis-a股-大盘-eastmoney-financial-data"
+    ],
+    "查询平安银行最新价": [
+      "finance-analysis-银行-查询平安银行最新价",
+      "finance-analysis-a股-大盘-eastmoney-financial-data"
+    ],
+    "再次尝试下": [
+      "finance-analysis-再次尝试下"
+    ],
+    "确认": [
+      "finance-analysis-确认",
+      "finance-analysis-银行-查看平安银行最新股价-确认"
+    ],
+    "再重新常使下查询": [
+      "finance-analysis-a股-行情-再重新常使下查询"
+    ],
+    "近一周的整体行情": [
+      "finance-analysis-a股-行情-再重新常使下查询"
+    ],
+    "再尝试下": [
+      "finance-analysis-再尝试下"
+    ],
+    "大盘近一周的整体行情": [
+      "finance-analysis-行情-大盘近一周的整体行情"
+    ],
+    "在尝试下": [
+      "finance-analysis-在尝试下"
+    ],
+    "查看平安银行最新股价": [
+      "finance-analysis-银行-查看平安银行最新股价-确认"
+    ],
+    "eastmoney-financial-data": [
+      "finance-analysis-a股-大盘-eastmoney-financial-data"
+    ],
+    "技能查询": [
+      "finance-analysis-a股-大盘-eastmoney-financial-data"
+    ],
+    "使用": [
+      "finance-analysis-a股-大盘-eastmoney-financial-data"
+    ],
+    "涨跌": [
+      "finance-analysis-大盘-涨跌-大盘涨跌幅"
+    ],
+    "大盘涨跌幅": [
+      "finance-analysis-大盘-涨跌-大盘涨跌幅"
+    ],
+    "今天的天气": [
+      "general-dialog-今天的天气"
+    ],
+    "沈阳": [
+      "general-dialog-沈阳"
+    ],
+    "解释": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "session_topics_dir": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "session_id": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "解释下这段": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "join": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "json": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "path": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "self": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ],
+    "今天": [
+      "finance-analysis-a股-大盘-今天",
+      "finance-analysis-a股-大盘-大盘情况如何"
+    ],
+    "大盘情况如何": [
+      "finance-analysis-a股-大盘-大盘情况如何"
+    ]
+  },
+  "intents": {
+    "general": [
+      "general-dialog-再帮我查询下北京的天气",
+      "general-dialog-哈尔滨",
+      "general-dialog-帮我查询下天气",
+      "general-dialog-我想了解下近一周的-股信息",
+      "finance-analysis-将问题进行返回-如果遇到问题-再次尝试",
+      "finance-analysis-再次尝试下",
+      "finance-analysis-再尝试下",
+      "finance-analysis-行情-大盘近一周的整体行情",
+      "finance-analysis-是",
+      "finance-analysis-在尝试下",
+      "finance-analysis-确认",
+      "finance-analysis-银行-查看平安银行最新股价-确认",
+      "finance-analysis-大盘-涨跌-大盘涨跌幅",
+      "general-dialog-沈阳",
+      "finance-analysis-a股-大盘-大盘情况如何"
+    ],
+    "retrieval": [
+      "finance-analysis-银行-查询平安银行最新价",
+      "finance-analysis-a股-行情-再重新常使下查询",
+      "finance-analysis-a股-大盘-eastmoney-financial-data",
+      "general-dialog-今天的天气",
+      "finance-analysis-a股-大盘-今天",
+      "finance-analysis-a股-大盘-大盘近一周大盘",
+      "finance-analysis-a股-大盘-大盘近一周"
+    ],
+    "explanation": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ]
+  },
+  "domains": {
+    "general_dialog": [
+      "general-dialog-再帮我查询下北京的天气",
+      "general-dialog-哈尔滨",
+      "general-dialog-帮我查询下天气",
+      "general-dialog-我想了解下近一周的-股信息",
+      "general-dialog-今天的天气",
+      "general-dialog-沈阳"
+    ],
+    "finance_analysis": [
+      "finance-analysis-将问题进行返回-如果遇到问题-再次尝试",
+      "finance-analysis-再次尝试下",
+      "finance-analysis-银行-查询平安银行最新价",
+      "finance-analysis-a股-行情-再重新常使下查询",
+      "finance-analysis-再尝试下",
+      "finance-analysis-行情-大盘近一周的整体行情",
+      "finance-analysis-是",
+      "finance-analysis-在尝试下",
+      "finance-analysis-确认",
+      "finance-analysis-银行-查看平安银行最新股价-确认",
+      "finance-analysis-a股-大盘-eastmoney-financial-data",
+      "finance-analysis-大盘-涨跌-大盘涨跌幅",
+      "finance-analysis-a股-大盘-今天",
+      "finance-analysis-a股-大盘-大盘近一周大盘",
+      "finance-analysis-a股-大盘-大盘近一周",
+      "finance-analysis-a股-大盘-大盘情况如何"
+    ],
+    "software_engineering": [
+      "software-engineering-解释-session-topics-dir-session-id"
+    ]
+  }
+}

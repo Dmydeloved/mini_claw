@@ -247,15 +247,23 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
         session_id: str,
         messages: List[Dict[str, Any]],
         prompt_preview: Optional[Dict[str, Any]] = None,
+        prompt_layers: Optional[Dict[str, Any]] = None,
     ):
         """Persist the exact prompt payload sent to the chat model."""
         raw_messages_file = os.path.join(self.raw_messages_dir, f"{session_id}.json")
+        prompt_layers = prompt_layers or {}
 
         payload = {
             "session_id": session_id,
             "updated_at": datetime.now().isoformat(),
             "message_count": len(messages),
             "messages": messages,
+            "system": prompt_layers.get("system", {}),
+            "skills": prompt_layers.get("skills", {}),
+            "tools": prompt_layers.get("tools", {}),
+            "topic_memory": prompt_layers.get("topic_memory", {}),
+            "session": prompt_layers.get("session", {}),
+            "user": prompt_layers.get("user", {}),
             "prompt_preview": prompt_preview or {},
         }
 
@@ -275,6 +283,12 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
                 "updated_at": "",
                 "message_count": 0,
                 "messages": [],
+                "system": {},
+                "skills": {},
+                "tools": {},
+                "topic_memory": {},
+                "session": {},
+                "user": {},
             }
 
         try:
@@ -287,6 +301,12 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
                 "updated_at": "",
                 "message_count": 0,
                 "messages": [],
+                "system": {},
+                "skills": {},
+                "tools": {},
+                "topic_memory": {},
+                "session": {},
+                "user": {},
             }
 
     def list_sessions(self) -> List[Dict[str, str]]:
@@ -337,9 +357,14 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
         max_sessions: int = 3,
         max_messages_per_session: int = 4,
         max_chars: int = 280,
+        exclude_session_id: Optional[str] = None,
     ) -> str:
         """Build a lightweight summary of recent user/assistant activity."""
-        sessions = self.list_sessions()[:max_sessions]
+        sessions = [
+            session
+            for session in self.list_sessions()
+            if not exclude_session_id or session["session_id"] != exclude_session_id
+        ][:max_sessions]
         if not sessions:
             return "No recent session activity."
 

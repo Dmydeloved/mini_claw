@@ -1,0 +1,1106 @@
+"""
+Topic-oriented memory management for Mini-OpenClaw.
+
+This module adds a lightweight topic layer on top of the existing
+profile/session memory system so the agent can:
+1. infer the current domain/topic/intent from a user message
+2. retrieve cross-session topic memories
+3. track topic slices inside each session
+4. consolidate new turns into reusable topic cards
+"""
+
+import json
+import os
+import re
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional, Sequence, Set, Tuple
+
+from .memory import Message
+
+
+ENGLISH_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "about",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "should",
+    "would",
+    "could",
+    "need",
+    "want",
+    "help",
+    "please",
+    "session",
+    "memory",
+    "context",
+    "topic",
+    "agent",
+}
+
+CHINESE_STOPWORDS = {
+    "\u5e2e\u6211",
+    "\u4e00\u4e0b",
+    "\u8fd9\u4e2a",
+    "\u90a3\u4e2a",
+    "\u73b0\u5728",
+    "\u9700\u8981",
+    "\u60f3\u8981",
+    "\u8bf7\u95ee",
+    "\u4e00\u4e2a",
+    "\u4e00\u4e9b",
+    "\u5df2\u7ecf",
+    "\u8fd8\u6709",
+    "\u4ee5\u53ca",
+    "\u56e0\u4e3a",
+    "\u6240\u4ee5",
+    "\u4f46\u662f",
+    "\u5982\u679c",
+    "\u7136\u540e",
+    "\u7ee7\u7eed",
+    "\u8fdb\u884c",
+    "\u5982\u4f55",
+    "\u600e\u4e48",
+    "\u4ec0\u4e48",
+    "\u4e3a\u4ec0\u4e48",
+    "\u662f\u5426",
+    "\u53ef\u4ee5",
+    "\u5bf9\u4e8e",
+    "\u5173\u4e8e",
+    "\u76f8\u5173",
+    "\u65b9\u9762",
+    "\u95ee\u9898",
+    "\u5185\u5bb9",
+    "\u57fa\u4e8e",
+    "\u7cfb\u7edf",
+    "\u4f1a\u8bdd",
+    "\u4e3b\u9898",
+    "\u4e0a\u4e0b\u6587",
+    "\u8bb0\u5fc6",
+    "\u7ecf\u9a8c",
+    "\u4fe1\u606f",
+    "\u60c5\u51b5",
+    "\u8be6\u60c5",
+    "\u4ecb\u7ecd",
+    "\u4e86\u89e3",
+    "\u67e5\u8be2",
+    "\u770b\u770b",
+    "\u6700\u8fd1",
+    "\u8fd1\u671f",
+}
+
+GENERIC_TOKEN_PREFIXES = (
+    "\u6211\u60f3\u4e86\u89e3\u4e0b",
+    "\u6211\u60f3\u4e86\u89e3\u4e00\u4e0b",
+    "\u60f3\u4e86\u89e3\u4e0b",
+    "\u60f3\u4e86\u89e3\u4e00\u4e0b",
+    "\u4e86\u89e3\u4e0b",
+    "\u4e86\u89e3\u4e00\u4e0b",
+    "\u5e2e\u6211\u67e5\u8be2\u4e0b",
+    "\u5e2e\u6211\u67e5\u8be2\u4e00\u4e0b",
+    "\u5e2e\u6211\u67e5\u4e0b",
+    "\u5e2e\u6211\u770b\u770b",
+    "\u8bf7\u5e2e\u6211",
+    "\u8bf7\u95ee",
+    "\u6211\u60f3",
+    "\u60f3",
+)
+
+GENERIC_TOKEN_SUFFIXES = (
+    "\u7684\u60c5\u51b5",
+    "\u7684\u4fe1\u606f",
+    "\u60c5\u51b5",
+    "\u4fe1\u606f",
+    "\u5185\u5bb9",
+    "\u65b9\u9762",
+    "\u4e00\u4e0b",
+    "\u7684",
+)
+
+GENERIC_RETRIEVAL_TERMS = {
+    "\u4e86\u89e3",
+    "\u67e5\u8be2",
+    "\u770b\u770b",
+    "query",
+    "find",
+    "search",
+}
+
+DOMAIN_KEYWORDS = {
+    "software_engineering": {
+        "python",
+        "java",
+        "golang",
+        "typescript",
+        "javascript",
+        "bug",
+        "debug",
+        "\u6d4b\u8bd5",
+        "\u4ee3\u7801",
+        "\u63a5\u53e3",
+        "\u524d\u7aef",
+        "\u540e\u7aef",
+        "\u6570\u636e\u5e93",
+        "\u90e8\u7f72",
+        "\u7f16\u7a0b",
+        "\u811a\u672c",
+        "\u51fd\u6570",
+        "\u7c7b",
+    },
+    "finance_analysis": {
+        "a\u80a1",
+        "b\u80a1",
+        "h\u80a1",
+        "\u6e2f\u80a1",
+        "\u7f8e\u80a1",
+        "\u80a1\u5e02",
+        "macd",
+        "kdj",
+        "boll",
+        "rsi",
+        "ema",
+        "ma",
+        "600036",
+        "\u80a1\u7968",
+        "\u4e2a\u80a1",
+        "\u5927\u76d8",
+        "\u677f\u5757",
+        "\u6307\u6570",
+        "\u4e0a\u8bc1",
+        "\u6df1\u8bc1",
+        "\u6caa\u6df1",
+        "\u6caa\u6df1300",
+        "\u521b\u4e1a\u677f",
+        "\u79d1\u521b\u677f",
+        "\u6da8\u8dcc",
+        "\u8d44\u91d1\u6d41\u5411",
+        "\u57fa\u91d1",
+        "\u94f6\u884c",
+        "\u8bc1\u5238",
+        "\u5e03\u6797\u5e26",
+        "\u5747\u7ebf",
+        "\u6280\u672f\u9762",
+        "\u652f\u6491\u4f4d",
+        "\u538b\u529b\u4f4d",
+        "\u8d22\u62a5",
+        "\u4f30\u503c",
+        "\u884c\u60c5",
+        "\u6210\u4ea4\u91cf",
+    },
+    "research_writing": {
+        "paper",
+        "research",
+        "summary",
+        "\u8bba\u6587",
+        "\u7814\u7a76",
+        "\u7efc\u8ff0",
+        "\u6458\u8981",
+        "\u6846\u67b6",
+        "\u65b9\u6848",
+        "\u65b9\u6cd5",
+        "\u8bbe\u8ba1",
+        "\u5199\u4f5c",
+        "\u62a5\u544a",
+        "\u8bfe\u9898",
+        "\u9879\u76ee",
+    },
+    "product_planning": {
+        "prd",
+        "prototype",
+        "feature",
+        "\u9700\u6c42",
+        "\u539f\u578b",
+        "\u529f\u80fd",
+        "\u6d41\u7a0b",
+        "\u9875\u9762",
+        "\u4ea4\u4e92",
+        "\u8bbe\u8ba1\u7a3f",
+        "\u89c4\u5212",
+    },
+}
+
+INTENT_KEYWORDS = {
+    "analysis": {
+        "review",
+        "analyze",
+        "compare",
+        "\u5206\u6790",
+        "\u5224\u65ad",
+        "\u8bc4\u4f30",
+        "\u6bd4\u8f83",
+    },
+    "implementation": {
+        "build",
+        "implement",
+        "fix",
+        "\u5b9e\u73b0",
+        "\u5f00\u53d1",
+        "\u7f16\u5199",
+        "\u4fee\u6539",
+        "\u4fee\u590d",
+    },
+    "planning": {
+        "plan",
+        "design",
+        "architecture",
+        "\u65b9\u6848",
+        "\u89c4\u5212",
+        "\u8bbe\u8ba1",
+        "\u67b6\u6784",
+        "\u601d\u8def",
+    },
+    "explanation": {
+        "why",
+        "explain",
+        "how",
+        "\u89e3\u91ca",
+        "\u8bf4\u660e",
+        "\u8bb2\u89e3",
+        "\u4ecb\u7ecd",
+    },
+    "summarization": {
+        "summary",
+        "summarize",
+        "\u603b\u7ed3",
+        "\u5f52\u7eb3",
+        "\u63d0\u70bc",
+        "\u6458\u8981",
+    },
+    "retrieval": {
+        "load",
+        "find",
+        "search",
+        "query",
+        "\u67e5\u627e",
+        "\u641c\u7d22",
+        "\u68c0\u7d22",
+        "\u67e5\u8be2",
+        "\u4e86\u89e3",
+    },
+}
+
+
+@dataclass
+class TopicIntent:
+    domain: str
+    topic: str
+    intents: List[str]
+    keywords: List[str]
+    confidence: float
+
+    @property
+    def topic_id(self) -> str:
+        return _slugify(f"{self.domain}-{self.topic}") or "general-topic"
+
+
+@dataclass
+class TopicCard:
+    topic_id: str
+    domain: str
+    topic: str
+    intents: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+    summaries: List[str] = field(default_factory=list)
+    tool_patterns: List[str] = field(default_factory=list)
+    related_sessions: List[str] = field(default_factory=list)
+    importance: float = 0.5
+    reuse_count: int = 0
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+@dataclass
+class SessionTopicSlice:
+    slice_id: str
+    topic_id: str
+    domain: str
+    topic: str
+    intents: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+    summary: str = ""
+    turn_count: int = 0
+    status: str = "active"
+    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    closed_at: Optional[str] = None
+    finalized_summary: str = ""
+
+
+@dataclass
+class SessionTopicState:
+    session_id: str
+    current_topic: Optional[TopicIntent] = None
+    slices: List[SessionTopicSlice] = field(default_factory=list)
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+@dataclass
+class TopicPromptContext:
+    analysis: Optional[TopicIntent]
+    topic_shift: bool
+    is_new_session: bool
+    retrieved_cards: List[TopicCard]
+    related_slices: List[SessionTopicSlice]
+    transition_notes: List[str]
+    rendered: str
+
+
+@dataclass
+class TopicTurnUpdate:
+    analysis: Optional[TopicIntent]
+    topic_shift: bool
+    closed_slice: Optional[SessionTopicSlice]
+    active_slice: Optional[SessionTopicSlice]
+
+
+def _slugify(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]+", "-", value.lower())
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
+    return normalized[:96]
+
+
+class TopicMemoryManager:
+    """Manage topic extraction, retrieval, consolidation, and topic slices."""
+
+    def __init__(self, memory_dir: str, sessions_dir: str):
+        self.memory_dir = os.path.abspath(memory_dir)
+        self.sessions_dir = os.path.abspath(sessions_dir)
+        self.topics_dir = os.path.join(self.memory_dir, "topics")
+        self.index_dir = os.path.join(self.memory_dir, "topic_index")
+        self.index_file = os.path.join(self.index_dir, "inverted_index.json")
+        self.session_topics_dir = os.path.join(self.sessions_dir, "_topic_state")
+
+        os.makedirs(self.topics_dir, exist_ok=True)
+        os.makedirs(self.index_dir, exist_ok=True)
+        os.makedirs(self.session_topics_dir, exist_ok=True)
+
+        if not os.path.exists(self.index_file):
+            self._save_json(
+                self.index_file,
+                {"keywords": {}, "intents": {}, "domains": {}},
+            )
+
+    def analyze_message(
+        self,
+        message: Optional[str],
+        previous: Optional[TopicIntent] = None,
+    ) -> Optional[TopicIntent]:
+        """Infer domain/topic/intent from the latest user message."""
+        if not message or not str(message).strip():
+            return previous
+
+        normalized_message = str(message).lower()
+        tokens = self._tokenize(str(message))
+        matched_keywords = self._extract_known_keywords(normalized_message)
+        keywords = self._merge_unique(matched_keywords, self._select_keywords(tokens), limit=8)
+        domain = self._infer_domain(tokens, normalized_message, previous)
+        intents = self._infer_intents(tokens, normalized_message)
+        topic = self._infer_topic(keywords, str(message), previous)
+        confidence = min(0.96, 0.35 + len(keywords) * 0.08 + len(intents) * 0.05)
+
+        return TopicIntent(
+            domain=domain,
+            topic=topic,
+            intents=intents,
+            keywords=keywords,
+            confidence=round(confidence, 2),
+        )
+
+    def build_prompt_context(
+        self,
+        session_id: Optional[str],
+        user_message: Optional[str],
+        history: Optional[Sequence[Message]] = None,
+        prepare_state: bool = False,
+    ) -> TopicPromptContext:
+        """Prepare topic-aware retrieval context for the next model call."""
+        state = self.load_session_state(session_id) if session_id else None
+        history = list(history or [])
+        previous = state.current_topic if state else None
+        is_new_session = self._is_new_session(state, history)
+        analysis = self.analyze_message(user_message, previous=previous)
+        topic_shift = False if analysis is None else (self.is_topic_shift(previous, analysis) or is_new_session)
+        transition_notes: List[str] = []
+
+        if not analysis:
+            return TopicPromptContext(
+                analysis=None,
+                topic_shift=False,
+                is_new_session=is_new_session,
+                retrieved_cards=[],
+                related_slices=[],
+                transition_notes=[],
+                rendered="No active topic inferred yet.",
+            )
+
+        if is_new_session:
+            transition_notes.append("new_session_detected")
+            transition_notes.append("load_agent_context")
+            transition_notes.append("load_topic_long_term_memory")
+        elif topic_shift:
+            if prepare_state:
+                closed_slice = self._close_active_slice_for_transition(
+                    state=state,
+                    session_id=session_id or "",
+                )
+                if closed_slice:
+                    transition_notes.append(f"closed_previous_topic_slice={closed_slice.topic}")
+                    transition_notes.append("merged_previous_topic_into_long_term_memory")
+            else:
+                transition_notes.append("previous_topic_slice_pending_close")
+            transition_notes.append("load_new_topic_related_history")
+            transition_notes.append("load_topic_long_term_memory")
+        else:
+            transition_notes.append("continue_current_topic")
+            transition_notes.append("load_topic_related_history")
+
+        cards = self.retrieve_topic_cards(analysis)
+        related_slices = self.retrieve_related_slices(
+            analysis,
+            exclude_session_id=session_id,
+        )
+        rendered = self._render_prompt_context(
+            analysis,
+            topic_shift,
+            is_new_session,
+            cards,
+            related_slices,
+            transition_notes,
+        )
+
+        return TopicPromptContext(
+            analysis=analysis,
+            topic_shift=topic_shift,
+            is_new_session=is_new_session,
+            retrieved_cards=cards,
+            related_slices=related_slices,
+            transition_notes=transition_notes,
+            rendered=rendered,
+        )
+
+    def is_topic_shift(
+        self,
+        previous: Optional[TopicIntent],
+        current: Optional[TopicIntent],
+    ) -> bool:
+        """Detect whether the conversation likely switched topic."""
+        if current is None:
+            return False
+        if previous is None:
+            return True
+
+        similarity = self.topic_similarity(previous, current)
+        if previous.domain != current.domain and similarity < 0.45:
+            return True
+        return similarity < 0.32
+
+    def topic_similarity(self, left: TopicIntent, right: TopicIntent) -> float:
+        """Compute a lightweight semantic similarity based on overlap."""
+        keyword_overlap = self._jaccard(set(left.keywords), set(right.keywords))
+        intent_overlap = self._jaccard(set(left.intents), set(right.intents))
+        domain_score = 1.0 if left.domain == right.domain else 0.0
+        topic_score = 1.0 if left.topic == right.topic else self._soft_topic_overlap(left.topic, right.topic)
+        return round(
+            keyword_overlap * 0.45
+            + intent_overlap * 0.2
+            + domain_score * 0.15
+            + topic_score * 0.2,
+            3,
+        )
+
+    def retrieve_topic_cards(
+        self,
+        analysis: TopicIntent,
+        limit: int = 3,
+    ) -> List[TopicCard]:
+        """Retrieve cross-session topic cards relevant to the current topic."""
+        candidates = self._candidate_topic_ids(analysis)
+        cards: List[Tuple[float, TopicCard]] = []
+
+        for topic_id in candidates:
+            card = self.load_topic_card(topic_id)
+            if not card:
+                continue
+            score = self._score_card(card, analysis)
+            if score > 0.15:
+                cards.append((score, card))
+
+        if not cards:
+            for filename in os.listdir(self.topics_dir):
+                if not filename.endswith(".json"):
+                    continue
+                card = self.load_topic_card(filename[:-5])
+                if not card:
+                    continue
+                score = self._score_card(card, analysis)
+                if score > 0.18:
+                    cards.append((score, card))
+
+        cards.sort(key=lambda item: item[0], reverse=True)
+        top_cards = [card for _, card in cards[:limit]]
+        for card in top_cards:
+            card.reuse_count += 1
+            card.updated_at = datetime.now().isoformat()
+            self.save_topic_card(card)
+        return top_cards
+
+    def retrieve_related_slices(
+        self,
+        analysis: TopicIntent,
+        exclude_session_id: Optional[str] = None,
+        limit: int = 2,
+    ) -> List[SessionTopicSlice]:
+        """Retrieve related topic slices from other sessions."""
+        ranked: List[Tuple[float, SessionTopicSlice]] = []
+
+        for filename in os.listdir(self.session_topics_dir):
+            if not filename.endswith(".json"):
+                continue
+
+            session_id = filename[:-5]
+            if exclude_session_id and session_id == exclude_session_id:
+                continue
+
+            state = self.load_session_state(session_id)
+            for session_slice in state.slices:
+                score = self._score_slice(session_slice, analysis)
+                if score > 0.18:
+                    ranked.append((score, session_slice))
+
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [session_slice for _, session_slice in ranked[:limit]]
+
+    def remember_turn(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_reply: str,
+        turn_messages: Sequence[Message],
+    ) -> TopicTurnUpdate:
+        """Persist the new turn into session topic slices and topic cards."""
+        state = self.load_session_state(session_id)
+        previous = state.current_topic
+        analysis = self.analyze_message(user_message, previous=previous)
+        if not analysis:
+            return TopicTurnUpdate(
+                analysis=previous,
+                topic_shift=False,
+                closed_slice=None,
+                active_slice=state.slices[-1] if state.slices else None,
+            )
+
+        topic_shift = self.is_topic_shift(previous, analysis)
+        turn_summary = self._summarize_turn(user_message, assistant_reply, turn_messages)
+        closed_slice: Optional[SessionTopicSlice] = None
+
+        if topic_shift and state.slices:
+            current_slice = state.slices[-1]
+            if current_slice.status != "closed":
+                current_slice.status = "closed"
+                current_slice.closed_at = datetime.now().isoformat()
+                current_slice.updated_at = current_slice.closed_at
+                current_slice.finalized_summary = self._build_slice_consolidation(current_slice)
+                self._merge_closed_slice_into_topic_card(session_id, current_slice)
+                closed_slice = current_slice
+
+        if topic_shift or not state.slices:
+            state.slices.append(
+                SessionTopicSlice(
+                    slice_id=f"{analysis.topic_id}-{len(state.slices) + 1}",
+                    topic_id=analysis.topic_id,
+                    domain=analysis.domain,
+                    topic=analysis.topic,
+                    intents=list(analysis.intents),
+                    keywords=list(analysis.keywords),
+                    summary=turn_summary,
+                    turn_count=1,
+                    status="active",
+                )
+            )
+        else:
+            current_slice = state.slices[-1]
+            current_slice.updated_at = datetime.now().isoformat()
+            current_slice.turn_count += 1
+            current_slice.intents = self._merge_unique(current_slice.intents, analysis.intents, limit=6)
+            current_slice.keywords = self._merge_unique(current_slice.keywords, analysis.keywords, limit=10)
+            current_slice.summary = self._merge_summaries(current_slice.summary, turn_summary)
+
+        state.current_topic = analysis
+        state.updated_at = datetime.now().isoformat()
+        self.save_session_state(state)
+        self._merge_turn_into_topic_card(session_id, analysis, turn_summary, turn_messages)
+        return TopicTurnUpdate(
+            analysis=analysis,
+            topic_shift=topic_shift,
+            closed_slice=closed_slice,
+            active_slice=state.slices[-1] if state.slices else None,
+        )
+
+    def load_session_state(self, session_id: Optional[str]) -> SessionTopicState:
+        """Load the topic state for a session."""
+        if not session_id:
+            return SessionTopicState(session_id="")
+
+        path = os.path.join(self.session_topics_dir, f"{session_id}.json")
+        if not os.path.exists(path):
+            return SessionTopicState(session_id=session_id)
+
+        payload = self._load_json(path, {})
+        current_topic_payload = payload.get("current_topic")
+        current_topic = TopicIntent(**current_topic_payload) if current_topic_payload else None
+        slices = [SessionTopicSlice(**item) for item in payload.get("slices", [])]
+        return SessionTopicState(
+            session_id=payload.get("session_id", session_id),
+            current_topic=current_topic,
+            slices=slices,
+            updated_at=payload.get("updated_at", datetime.now().isoformat()),
+        )
+
+    def save_session_state(self, state: SessionTopicState):
+        """Persist per-session topic slices and current topic state."""
+        if not state.session_id:
+            return
+
+        payload = {
+            "session_id": state.session_id,
+            "current_topic": asdict(state.current_topic) if state.current_topic else None,
+            "slices": [asdict(item) for item in state.slices],
+            "updated_at": state.updated_at,
+        }
+        path = os.path.join(self.session_topics_dir, f"{state.session_id}.json")
+        self._save_json(path, payload)
+
+    def load_topic_card(self, topic_id: str) -> Optional[TopicCard]:
+        """Load a single topic card from disk."""
+        path = os.path.join(self.topics_dir, f"{topic_id}.json")
+        if not os.path.exists(path):
+            return None
+        payload = self._load_json(path, {})
+        return TopicCard(**payload) if payload else None
+
+    def save_topic_card(self, card: TopicCard):
+        """Persist a topic card and refresh the inverted index."""
+        path = os.path.join(self.topics_dir, f"{card.topic_id}.json")
+        self._save_json(path, asdict(card))
+        self._refresh_index_for_card(card)
+
+    def _tokenize(self, text: str) -> List[str]:
+        # Keep mixed market tokens like `A股`/`港股` intact instead of splitting them into noise.
+        raw_tokens = re.findall(
+            r"[A-Za-z][A-Za-z0-9_+-]*(?:\u80a1|\u5e02|\u6307\u6570)?|"
+            r"[\u4e00-\u9fff]{2,}|"
+            r"[0-9]{3,}",
+            text,
+        )
+        tokens: List[str] = []
+        for token in raw_tokens:
+            normalized = self._normalize_candidate_token(token)
+            if not normalized:
+                continue
+            if normalized in ENGLISH_STOPWORDS or normalized in CHINESE_STOPWORDS:
+                continue
+            if len(normalized) == 1:
+                continue
+            tokens.append(normalized)
+        return tokens
+
+    def _normalize_candidate_token(self, token: str) -> str:
+        """Trim conversational wrappers so topic keywords stay task-focused."""
+        normalized = token.strip().lower()
+        if not normalized:
+            return ""
+
+        changed = True
+        while changed and normalized:
+            changed = False
+            for prefix in GENERIC_TOKEN_PREFIXES:
+                if normalized.startswith(prefix):
+                    normalized = normalized[len(prefix):].strip()
+                    changed = True
+            for suffix in GENERIC_TOKEN_SUFFIXES:
+                if normalized.endswith(suffix):
+                    normalized = normalized[:-len(suffix)].strip()
+                    changed = True
+
+        return normalized
+
+    def _select_keywords(self, tokens: Sequence[str], limit: int = 8) -> List[str]:
+        seen: Set[str] = set()
+        ranked = sorted(tokens, key=self._keyword_sort_key)
+        keywords: List[str] = []
+        for token in ranked:
+            if token in seen:
+                continue
+            seen.add(token)
+            keywords.append(token)
+            if len(keywords) >= limit:
+                break
+        return keywords
+
+    def _keyword_sort_key(self, token: str) -> Tuple[int, int, str]:
+        is_numeric = 1 if token.isdigit() else 0
+        is_indicator = 1 if token.upper() in {"MACD", "KDJ", "RSI", "BOLL", "EMA", "MA"} else 0
+        return (-is_indicator, -is_numeric, -len(token), token)
+
+    def _infer_domain(
+        self,
+        tokens: Sequence[str],
+        normalized_message: str,
+        previous: Optional[TopicIntent],
+    ) -> str:
+        token_set = set(tokens)
+        best_domain = "general_dialog"
+        best_score = 0
+
+        for domain, keywords in DOMAIN_KEYWORDS.items():
+            score = len(token_set & keywords)
+            score += sum(1 for keyword in keywords if keyword in normalized_message)
+            if score > best_score:
+                best_domain = domain
+                best_score = score
+
+        if best_score == 0 and previous:
+            return previous.domain
+        return best_domain
+
+    def _infer_intents(self, tokens: Sequence[str], normalized_message: str) -> List[str]:
+        token_set = set(tokens)
+        intents: List[str] = []
+        for intent, keywords in INTENT_KEYWORDS.items():
+            if (token_set & keywords) or any(keyword in normalized_message for keyword in keywords):
+                intents.append(intent)
+        return intents or ["general"]
+
+    def _infer_topic(
+        self,
+        keywords: Sequence[str],
+        message: str,
+        previous: Optional[TopicIntent],
+    ) -> str:
+        if keywords:
+            return " / ".join(list(keywords)[:3])
+
+        normalized = " ".join(message.strip().split())
+        if normalized:
+            return normalized[:48]
+
+        if previous:
+            return previous.topic
+
+        return "general topic"
+
+    def _extract_known_keywords(self, normalized_message: str) -> List[str]:
+        keywords: List[str] = []
+        known_terms = sorted(
+            {
+                term.lower()
+                for group in (DOMAIN_KEYWORDS, INTENT_KEYWORDS)
+                for terms in group.values()
+                for term in terms
+            },
+            key=lambda item: (-len(item), item),
+        )
+        for term in known_terms:
+            if term in GENERIC_RETRIEVAL_TERMS:
+                continue
+            if term in normalized_message and term not in keywords:
+                keywords.append(term)
+        return keywords
+
+    def _candidate_topic_ids(self, analysis: TopicIntent) -> Set[str]:
+        index = self._load_json(self.index_file, {"keywords": {}, "intents": {}, "domains": {}})
+        candidates: Set[str] = set()
+
+        for keyword in analysis.keywords:
+            candidates.update(index.get("keywords", {}).get(keyword, []))
+        for intent in analysis.intents:
+            candidates.update(index.get("intents", {}).get(intent, []))
+        candidates.update(index.get("domains", {}).get(analysis.domain, []))
+        return candidates
+
+    def _score_card(self, card: TopicCard, analysis: TopicIntent) -> float:
+        keyword_score = self._jaccard(set(card.keywords), set(analysis.keywords))
+        intent_score = self._jaccard(
+            self._effective_intents(card.intents),
+            self._effective_intents(analysis.intents),
+        )
+        domain_score = self._domain_match_score(card.domain, analysis.domain)
+        topic_score = self._soft_topic_overlap(card.topic, analysis.topic)
+        importance_score = min(1.0, card.importance)
+        if (
+            analysis.domain == "general_dialog"
+            and keyword_score == 0
+            and topic_score < 0.35
+        ):
+            return 0.0
+        return round(
+            keyword_score * 0.4
+            + intent_score * 0.2
+            + domain_score * 0.15
+            + topic_score * 0.15
+            + importance_score * 0.1,
+            3,
+        )
+
+    def _score_slice(self, session_slice: SessionTopicSlice, analysis: TopicIntent) -> float:
+        keyword_score = self._jaccard(set(session_slice.keywords), set(analysis.keywords))
+        intent_score = self._jaccard(
+            self._effective_intents(session_slice.intents),
+            self._effective_intents(analysis.intents),
+        )
+        domain_score = self._domain_match_score(session_slice.domain, analysis.domain)
+        topic_score = self._soft_topic_overlap(session_slice.topic, analysis.topic)
+        if (
+            analysis.domain == "general_dialog"
+            and keyword_score == 0
+            and topic_score < 0.35
+        ):
+            return 0.0
+        return round(
+            keyword_score * 0.45
+            + intent_score * 0.15
+            + domain_score * 0.15
+            + topic_score * 0.25,
+            3,
+        )
+
+    def _effective_intents(self, intents: Sequence[str]) -> Set[str]:
+        """Treat `general` as a fallback label, not as a strong retrieval signal."""
+        return {intent for intent in intents if intent and intent != "general"}
+
+    def _domain_match_score(self, left_domain: str, right_domain: str) -> float:
+        if left_domain != right_domain:
+            return 0.0
+        if left_domain == "general_dialog":
+            return 0.2
+        return 1.0
+
+    def _render_prompt_context(
+        self,
+        analysis: TopicIntent,
+        topic_shift: bool,
+        is_new_session: bool,
+        cards: Sequence[TopicCard],
+        related_slices: Sequence[SessionTopicSlice],
+        transition_notes: Sequence[str],
+    ) -> str:
+        lines = [
+            "## Current Topic Analysis",
+            f"- domain: {analysis.domain}",
+            f"- topic: {analysis.topic}",
+            f"- intents: {', '.join(analysis.intents)}",
+            f"- keywords: {', '.join(analysis.keywords)}",
+            f"- new_session_detected: {'yes' if is_new_session else 'no'}",
+            f"- topic_shift_detected: {'yes' if topic_shift else 'no'}",
+            f"- prompt_flow_actions: {', '.join(transition_notes) or 'none'}",
+            "",
+            "## Retrieved Topic Memories",
+        ]
+
+        if not cards:
+            lines.append("- No strongly related long-term topic memories found yet.")
+        else:
+            for card in cards:
+                lines.append(f"- [{card.domain}] {card.topic}")
+                if card.summaries:
+                    lines.append(f"  summary: {card.summaries[-1]}")
+                if card.tool_patterns:
+                    lines.append(f"  tool patterns: {', '.join(card.tool_patterns[:4])}")
+
+        lines.extend(["", "## Related Historical Topic Slices"])
+        if not related_slices:
+            lines.append("- No related topic slices from prior sessions.")
+        else:
+            for session_slice in related_slices:
+                lines.append(
+                    f"- [{session_slice.domain}] {session_slice.topic}: {session_slice.summary}"
+                )
+
+        return "\n".join(lines).strip()
+
+    def _is_new_session(
+        self,
+        state: Optional[SessionTopicState],
+        history: Sequence[Message],
+    ) -> bool:
+        if not history:
+            return True
+        if not state:
+            return True
+        return not state.slices and state.current_topic is None
+
+    def _close_active_slice_for_transition(
+        self,
+        state: Optional[SessionTopicState],
+        session_id: str,
+    ) -> Optional[SessionTopicSlice]:
+        if not state or not state.slices:
+            return None
+
+        current_slice = state.slices[-1]
+        if current_slice.status == "closed":
+            return None
+
+        current_slice.status = "closed"
+        current_slice.closed_at = datetime.now().isoformat()
+        current_slice.updated_at = current_slice.closed_at
+        current_slice.finalized_summary = self._build_slice_consolidation(current_slice)
+        self._merge_closed_slice_into_topic_card(session_id, current_slice)
+        state.updated_at = current_slice.updated_at
+        self.save_session_state(state)
+        return current_slice
+
+    def _summarize_turn(
+        self,
+        user_message: str,
+        assistant_reply: str,
+        turn_messages: Sequence[Message],
+    ) -> str:
+        user_snippet = " ".join(user_message.split())[:180]
+        assistant_snippet = " ".join((assistant_reply or "").split())[:220]
+        tools = [msg.name for msg in turn_messages if msg.role == "tool" and msg.name]
+        tool_names = self._merge_unique([], tools, limit=4)
+        tool_summary = f"; tools={', '.join(tool_names)}" if tool_names else ""
+        return f"user={user_snippet}; assistant={assistant_snippet}{tool_summary}"
+
+    def _merge_turn_into_topic_card(
+        self,
+        session_id: str,
+        analysis: TopicIntent,
+        turn_summary: str,
+        turn_messages: Sequence[Message],
+    ):
+        card = self.load_topic_card(analysis.topic_id)
+        if not card:
+            card = TopicCard(
+                topic_id=analysis.topic_id,
+                domain=analysis.domain,
+                topic=analysis.topic,
+            )
+
+        card.intents = self._merge_unique(card.intents, analysis.intents, limit=8)
+        card.keywords = self._merge_unique(card.keywords, analysis.keywords, limit=12)
+        card.summaries = self._merge_unique(card.summaries, [turn_summary], limit=8)
+        tool_names = [msg.name for msg in turn_messages if msg.role == "tool" and msg.name]
+        card.tool_patterns = self._merge_unique(card.tool_patterns, tool_names, limit=8)
+        card.related_sessions = self._merge_unique(card.related_sessions, [session_id], limit=12)
+        card.importance = min(1.0, round(card.importance + 0.06, 2))
+        card.updated_at = datetime.now().isoformat()
+        self.save_topic_card(card)
+
+    def _merge_closed_slice_into_topic_card(
+        self,
+        session_id: str,
+        session_slice: SessionTopicSlice,
+    ):
+        card = self.load_topic_card(session_slice.topic_id)
+        if not card:
+            card = TopicCard(
+                topic_id=session_slice.topic_id,
+                domain=session_slice.domain,
+                topic=session_slice.topic,
+            )
+
+        consolidation = session_slice.finalized_summary or self._build_slice_consolidation(session_slice)
+        card.intents = self._merge_unique(card.intents, session_slice.intents, limit=8)
+        card.keywords = self._merge_unique(card.keywords, session_slice.keywords, limit=12)
+        card.summaries = self._merge_unique(card.summaries, [consolidation], limit=8)
+        card.related_sessions = self._merge_unique(card.related_sessions, [session_id], limit=12)
+        card.importance = min(1.0, round(card.importance + 0.1, 2))
+        card.updated_at = datetime.now().isoformat()
+        self.save_topic_card(card)
+
+    def _build_slice_consolidation(self, session_slice: SessionTopicSlice) -> str:
+        keywords = ", ".join(session_slice.keywords[:6]) or "n/a"
+        intents = ", ".join(session_slice.intents[:4]) or "general"
+        base_summary = session_slice.summary or "No summary captured."
+        return (
+            f"topic={session_slice.topic}; intents={intents}; "
+            f"turns={session_slice.turn_count}; keywords={keywords}; "
+            f"recap={base_summary}"
+        )[:500]
+
+    def _refresh_index_for_card(self, card: TopicCard):
+        index = self._load_json(self.index_file, {"keywords": {}, "intents": {}, "domains": {}})
+        index = self._remove_topic_from_index(index, card.topic_id)
+
+        for keyword in card.keywords:
+            index.setdefault("keywords", {}).setdefault(keyword, []).append(card.topic_id)
+        for intent in card.intents:
+            index.setdefault("intents", {}).setdefault(intent, []).append(card.topic_id)
+        index.setdefault("domains", {}).setdefault(card.domain, []).append(card.topic_id)
+
+        self._save_json(self.index_file, self._deduplicate_index(index))
+
+    def _remove_topic_from_index(self, index: Dict, topic_id: str) -> Dict:
+        for bucket in ("keywords", "intents", "domains"):
+            for key, values in list(index.get(bucket, {}).items()):
+                index[bucket][key] = [value for value in values if value != topic_id]
+                if not index[bucket][key]:
+                    index[bucket].pop(key, None)
+        return index
+
+    def _deduplicate_index(self, index: Dict) -> Dict:
+        for bucket in ("keywords", "intents", "domains"):
+            cleaned = {}
+            for key, values in index.get(bucket, {}).items():
+                cleaned[key] = list(dict.fromkeys(values))
+            index[bucket] = cleaned
+        return index
+
+    def _merge_summaries(self, existing: str, new_summary: str) -> str:
+        if not existing:
+            return new_summary[:420]
+        if new_summary in existing:
+            return existing[:420]
+        return f"{existing} | {new_summary}"[:420]
+
+    def _merge_unique(
+        self,
+        existing: Sequence[str],
+        incoming: Sequence[str],
+        limit: int,
+    ) -> List[str]:
+        merged = list(existing)
+        for item in incoming:
+            normalized = str(item).strip()
+            if not normalized or normalized in merged:
+                continue
+            merged.append(normalized)
+        return merged[-limit:]
+
+    def _soft_topic_overlap(self, left: str, right: str) -> float:
+        if not left or not right:
+            return 0.0
+        if left == right:
+            return 1.0
+        return self._jaccard(set(left.split(" / ")), set(right.split(" / ")))
+
+    def _jaccard(self, left: Set[str], right: Set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        union = len(left | right)
+        if union == 0:
+            return 0.0
+        return len(left & right) / union
+
+    def _load_json(self, path: str, default):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default
+
+    def _save_json(self, path: str, payload):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)

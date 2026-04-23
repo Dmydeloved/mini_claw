@@ -1,0 +1,29 @@
+{
+  "topic_id": "finance-analysis-a股-大盘-大盘情况如何",
+  "domain": "finance_analysis",
+  "topic": "a股 / 大盘 / 大盘情况如何",
+  "intents": [
+    "general"
+  ],
+  "keywords": [
+    "a股",
+    "大盘",
+    "大盘情况如何",
+    "今天"
+  ],
+  "summaries": [
+    "user=今天A股大盘情况如何; assistant=今天A股大盘主要指数的名称分别是： - 上证指数（000001） - 深证成指（399001） - 沪深300指数（000300） 当前接口返回的是指数代码和名称字段，未包含涨跌幅具体数值字段。可能需要调整请求的字段参数，或者使用其他接口字段。 请确认您需要查询今日大盘涨跌幅的具体指标，我可以帮您确认正确的接口字段名称后再次查询。您也可以告诉我是否需要成交量、资金流向等其他大盘指标。; tools=read_file, terminal, fetch_url"
+  ],
+  "tool_patterns": [
+    "read_file",
+    "terminal",
+    "fetch_url"
+  ],
+  "related_sessions": [
+    "20260423_215045"
+  ],
+  "importance": 0.56,
+  "reuse_count": 0,
+  "created_at": "2026-04-23T21:53:07.415354",
+  "updated_at": "2026-04-23T21:53:07.415354"
+}

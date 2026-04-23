@@ -1,0 +1,38 @@
+{
+  "session_id": "20260419_211501",
+  "current_topic": {
+    "domain": "general_dialog",
+    "topic": "再帮我查询下北京的天气",
+    "intents": [
+      "general"
+    ],
+    "keywords": [
+      "再帮我查询下北京的天气"
+    ],
+    "confidence": 0.48
+  },
+  "slices": [
+    {
+      "slice_id": "general-dialog-帮我查询下天气-1",
+      "topic_id": "general-dialog-帮我查询下天气",
+      "domain": "general_dialog",
+      "topic": "帮我查询下天气",
+      "intents": [
+        "general"
+      ],
+      "keywords": [
+        "帮我查询下天气",
+        "哈尔滨",
+        "再帮我查询下北京的天气"
+      ],
+      "summary": "user=帮我查询下天气; assistant=请告诉我您想查询哪个城市的天气？ | user=哈尔滨; assistant=哈尔滨当前的天气是多云，气温约17°C，风速约26公里/小时。如需更详细天气信息或未来预报，请告诉我。; tools=read_file, terminal, fetch_url | user=再帮我查询下北京的天气; assistant=北京当前的天气是阴天，气温约14°C，风速约26公里/小时。需要更详细的天气信息或未来几天的预报吗？; tools=fetch_url",
+      "turn_count": 3,
+      "status": "active",
+      "started_at": "2026-04-19T21:15:10.312120",
+      "updated_at": "2026-04-19T21:30:04.126470",
+      "closed_at": null,
+      "finalized_summary": ""
+    }
+  ],
+  "updated_at": "2026-04-19T21:30:04.126470"
+}

@@ -1,0 +1,31 @@
+{
+  "topic_id": "general-dialog-沈阳",
+  "domain": "general_dialog",
+  "topic": "沈阳",
+  "intents": [
+    "general"
+  ],
+  "keywords": [
+    "沈阳"
+  ],
+  "summaries": [
+    "user=沈阳; assistant=今天沈阳的天气是：有薄雾，气温约13°C（56°F），湿度88%，无降水，能见度约2英里，风向为南南西，风速约14公里/小时（9英里/小时），紫外线指数为0，适合室外活动。如果您需要更详细的天气信息或未来几天的预报，请告诉我。; tools=terminal, read_file, fetch_url",
+    "user=沈阳; assistant=沈阳当前的天气是：晴，气温约22°C。如果您需要更详细的天气信息或者未来的天气预报，请告诉我。; tools=read_file, terminal, fetch_url",
+    "user=沈阳; assistant=今天沈阳的天气是局部多云，气温约16°C，湿度29%，风向为西南偏南，风速约23公里/小时。没有降水，紫外线指数为0，能见度约10公里。您需要更详细的天气信息或者未来几天的预报吗？; tools=fetch_url",
+    "topic=沈阳; intents=general; turns=1; keywords=沈阳; recap=user=沈阳; assistant=今天沈阳的天气是局部多云，气温约16°C，湿度29%，风向为西南偏南，风速约23公里/小时。没有降水，紫外线指数为0，能见度约10公里。您需要更详细的天气信息或者未来几天的预报吗？; tools=fetch_url"
+  ],
+  "tool_patterns": [
+    "terminal",
+    "read_file",
+    "fetch_url"
+  ],
+  "related_sessions": [
+    "20260418_230151",
+    "20260419_193029",
+    "20260423_215045"
+  ],
+  "importance": 0.78,
+  "reuse_count": 8,
+  "created_at": "2026-04-18T23:02:36.898642",
+  "updated_at": "2026-04-23T21:51:59.526295"
+}

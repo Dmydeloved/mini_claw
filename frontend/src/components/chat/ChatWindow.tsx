@@ -13,7 +13,7 @@ import {
   getSkills,
   previewRawMessages,
   saveFile,
-  sendMessage,
+  streamMessage,
   type SessionInfo,
   type Skill,
 } from '@/lib/api';
@@ -345,20 +345,45 @@ export default function ChatWindow() {
     }
   }
 
+  function upsertAssistantMessage(content: string) {
+    setMessages((prev) => {
+      const next = [...prev];
+      const lastMessage = next[next.length - 1];
+
+      if (lastMessage?.role === 'assistant') {
+        next[next.length - 1] = { ...lastMessage, content };
+        return next;
+      }
+
+      return [...next, { role: 'assistant', content }];
+    });
+  }
+
   async function handleSend() {
     if (!input.trim() || loading) return;
 
     const userMessage = input.trim();
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: userMessage },
+      { role: 'assistant', content: '' },
+    ]);
     setLoading(true);
-    setStatusText('Agent is thinking');
+    setStatusText('Agent is streaming');
     setActiveTab('chat');
     setChatInspectorTab('session');
     setRightCollapsed(false);
 
     try {
-      const response = await sendMessage(userMessage, sessionId);
+      const response = await streamMessage(userMessage, sessionId, {
+        onSession: (nextSessionId) => {
+          setSessionId(nextSessionId);
+        },
+        onDelta: (_chunk, fullReply) => {
+          upsertAssistantMessage(fullReply);
+        },
+      });
       const [sessionsData, artifacts] = await Promise.all([
         getSessions(),
         loadChatArtifacts(response.session_id),
@@ -377,7 +402,7 @@ export default function ChatWindow() {
         error instanceof Error
           ? error.message
           : 'Connection error: backend is unavailable.';
-      setMessages((prev) => [...prev, { role: 'assistant', content: fallbackMessage }]);
+      upsertAssistantMessage(fallbackMessage);
       setStatusText('Chat request failed');
     } finally {
       setLoading(false);

@@ -14,11 +14,10 @@ enabled: true
 ```bash
 curl -X POST --location 'https://mkapi2.dfcfs.com/finskillshub/api/claw/query' \
 --header 'Content-Type: application/json' \
---header 'apikey: ${EASTMONEY_APIKEY}' \
+--header 'apikey: mkt_q7ig2Cc3vPB7NSEbc6k7BE7isqprpQCgHVWlR7rOplw' \
 --data '{"toolQuery":"<查询内容>"}'
 ```
 
-**API Key 已配置**: 存于 `~/.openclaw/workspace/.env.eastmoney`
 
 ## 数据类型
 

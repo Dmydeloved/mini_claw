@@ -3,6 +3,7 @@ FastAPI Application for Mini-OpenClaw
 RESTful API server for agent interactions and file editing.
 """
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,8 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from graph.agent_graph import MiniOpenClawAgent
 
@@ -86,12 +88,12 @@ agent = MiniOpenClawAgent(
     storage_dir=storage_dir,
 )
 
-print("✓ Mini-OpenClaw Agent initialized")
-print(f"✓ Model: {model_name}")
-print(f"✓ Base URL: {base_url or 'https://api.openai.com/v1'}")
-print(f"✓ Use Responses API: {use_responses_api}")
-print(f"✓ Default Headers: {list(default_headers.keys()) if default_headers else 'none'}")
-print(f"✓ Skills loaded: {len(agent.get_skills())}")
+print("Mini-OpenClaw Agent initialized")
+print(f"Model: {model_name}")
+print(f"Base URL: {base_url or 'https://api.openai.com/v1'}")
+print(f"Use Responses API: {use_responses_api}")
+print(f"Default Headers: {list(default_headers.keys()) if default_headers else 'none'}")
+print(f"Skills loaded: {len(agent.get_skills())}")
 
 
 class ChatRequest(BaseModel):
@@ -147,10 +149,12 @@ class PromptPreview(BaseModel):
     skills_summary: str
     tools_and_functions: str
     retrieved_memory: str
+    topic_memory: str = ""
     current_context: str
     autonomous_agent_loop: str
     current_user_message: str
     conversation_messages: List[RawMessage]
+    structured_prompt: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RawMessagesResponse(BaseModel):
@@ -158,7 +162,18 @@ class RawMessagesResponse(BaseModel):
     updated_at: str
     message_count: int
     messages: List[RawMessage]
+    system: Dict[str, Any] = Field(default_factory=dict)
+    skills: Dict[str, Any] = Field(default_factory=dict)
+    tools: Dict[str, Any] = Field(default_factory=dict)
+    topic_memory: Dict[str, Any] = Field(default_factory=dict)
+    session: Dict[str, Any] = Field(default_factory=dict)
+    user: Dict[str, Any] = Field(default_factory=dict)
     prompt_preview: Optional[PromptPreview] = None
+
+
+def _sse_event(event: str, payload: Dict[str, Any]) -> str:
+    """Serialize one server-sent event."""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _resolve_project_file(relative_path: str) -> Path:
@@ -184,9 +199,58 @@ async def root():
     return {"status": "running", "service": "Mini-OpenClaw", "version": "1.0.0"}
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat")
 async def chat(request: ChatRequest):
     """Main chat endpoint."""
+    if request.stream:
+        async def event_generator():
+            session_announced = False
+            chat_task = asyncio.create_task(
+                asyncio.to_thread(
+                    agent.chat,
+                    message=request.message,
+                    session_id=request.session_id,
+                )
+            )
+
+            try:
+                if request.session_id:
+                    session_announced = True
+                    yield _sse_event("session", {"session_id": request.session_id})
+
+                yield _sse_event("start", {"status": "processing"})
+
+                while not chat_task.done():
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(1)
+
+                result = await chat_task
+                session_id = result["session_id"]
+                reply = result["reply"]
+
+                if not session_announced:
+                    yield _sse_event("session", {"session_id": session_id})
+
+                for char in reply:
+                    yield _sse_event("delta", {"content": char})
+                    await asyncio.sleep(0.01)
+
+                yield _sse_event("done", {"reply": reply, "session_id": session_id})
+            except Exception as e:
+                if not chat_task.done():
+                    chat_task.cancel()
+                yield _sse_event("error", {"detail": str(e)})
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     try:
         result = agent.chat(message=request.message, session_id=request.session_id)
         return ChatResponse(**result)

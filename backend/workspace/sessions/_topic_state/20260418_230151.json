@@ -1,0 +1,37 @@
+{
+  "session_id": "20260418_230151",
+  "current_topic": {
+    "domain": "general_dialog",
+    "topic": "沈阳",
+    "intents": [
+      "general"
+    ],
+    "keywords": [
+      "沈阳"
+    ],
+    "confidence": 0.48
+  },
+  "slices": [
+    {
+      "slice_id": "general-dialog-帮我查询下天气-1",
+      "topic_id": "general-dialog-帮我查询下天气",
+      "domain": "general_dialog",
+      "topic": "帮我查询下天气",
+      "intents": [
+        "general"
+      ],
+      "keywords": [
+        "帮我查询下天气",
+        "沈阳"
+      ],
+      "summary": "user=帮我查询下天气; assistant=请告诉我您想查询哪个城市的天气？; tools=read_file | user=沈阳; assistant=今天沈阳的天气是：有薄雾，气温约13°C（56°F），湿度88%，无降水，能见度约2英里，风向为南南西，风速约14公里/小时（9英里/小时），紫外线指数为0，适合室外活动。如果您需要更详细的天气信息或未来几天的预报，请告诉我。; tools=terminal, read_file, fetch_url",
+      "turn_count": 2,
+      "status": "active",
+      "started_at": "2026-04-18T23:02:19.562162",
+      "updated_at": "2026-04-18T23:02:36.897666",
+      "closed_at": null,
+      "finalized_summary": ""
+    }
+  ],
+  "updated_at": "2026-04-18T23:02:36.897666"
+}

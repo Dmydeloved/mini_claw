@@ -1,0 +1,25 @@
+{
+  "topic_id": "finance-analysis-银行-查询平安银行最新价",
+  "domain": "finance_analysis",
+  "topic": "银行 / 查询平安银行最新价",
+  "intents": [
+    "retrieval"
+  ],
+  "keywords": [
+    "银行",
+    "查询平安银行最新价"
+  ],
+  "summaries": [
+    "user=查询平安银行最新价; assistant=请您确认一下，平安银行的股票代码是000001 (平安银行 A股代码)，我准备用eastmoney-financial-data技能帮您查询其最新股价。请确认是否正确？或者您提供具体代码以便准确查询。; tools=read_file"
+  ],
+  "tool_patterns": [
+    "read_file"
+  ],
+  "related_sessions": [
+    "20260419_220344"
+  ],
+  "importance": 0.56,
+  "reuse_count": 1,
+  "created_at": "2026-04-19T22:04:48.384858",
+  "updated_at": "2026-04-19T22:10:04.537492"
+}
