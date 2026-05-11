@@ -35,19 +35,16 @@ def _slugify(value: str) -> str:
 
 
 class ExperienceMiner:
-    """Track repeated tool-use patterns and turn them into candidate skills."""
+    """Compatibility shell for the legacy experience miner.
+
+    The new topic memory MVP keeps only QA / Segment / Experience /
+    SegmentRelation / RuntimeState as persisted memory objects, so this
+    component no longer writes additional experience artifacts.
+    """
 
     def __init__(self, memory_dir: str):
         self.memory_dir = os.path.abspath(memory_dir)
-        self.experience_dir = os.path.join(self.memory_dir, "experience")
-        self.skill_candidates_dir = os.path.join(self.experience_dir, "skill_candidates")
-        self.pattern_index_file = os.path.join(self.experience_dir, "pattern_index.json")
-
-        os.makedirs(self.experience_dir, exist_ok=True)
-        os.makedirs(self.skill_candidates_dir, exist_ok=True)
-
-        if not os.path.exists(self.pattern_index_file):
-            self._save_json(self.pattern_index_file, {"patterns": {}})
+        self.enabled = False
 
     def record_turn(
         self,
@@ -57,44 +54,8 @@ class ExperienceMiner:
         turn_messages: Sequence[Message],
         topic_update: Optional[TopicTurnUpdate],
     ) -> Optional[SkillCandidate]:
-        """Capture execution patterns from a finished turn and emit a skill candidate when justified."""
-        analysis = topic_update.analysis if topic_update else None
-        if not analysis:
-            return None
-
-        tool_sequence = [msg.name for msg in turn_messages if msg.role == "tool" and msg.name]
-        if len(tool_sequence) < 2:
-            return None
-
-        signature = self._build_pattern_signature(analysis, tool_sequence)
-        pattern_index = self._load_json(self.pattern_index_file, {"patterns": {}})
-        patterns = pattern_index.setdefault("patterns", {})
-        entry = patterns.get(signature, {})
-
-        entry["domain"] = analysis.domain
-        entry["topic"] = analysis.topic
-        entry["intents"] = list(analysis.intents)
-        entry["tool_sequence"] = list(tool_sequence)
-        entry["count"] = int(entry.get("count", 0)) + 1
-        entry["examples"] = self._append_limited(
-            entry.get("examples", []),
-            {
-                "session_id": session_id,
-                "user_message": user_message[:220],
-                "assistant_reply": assistant_reply[:260],
-                "updated_at": datetime.now().isoformat(),
-            },
-            limit=5,
-        )
-        entry["session_ids"] = self._append_unique(entry.get("session_ids", []), session_id, limit=12)
-        entry["updated_at"] = datetime.now().isoformat()
-        patterns[signature] = entry
-        self._save_json(self.pattern_index_file, pattern_index)
-
-        if not self._should_generate_candidate(entry, topic_update):
-            return None
-
-        return self._write_skill_candidate(signature, entry)
+        del session_id, user_message, assistant_reply, turn_messages, topic_update
+        return None
 
     def _build_pattern_signature(self, analysis: TopicIntent, tool_sequence: Sequence[str]) -> str:
         intents = ",".join(sorted(analysis.intents))

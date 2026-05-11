@@ -1,0 +1,10 @@
+{
+  "relation_id": "rel_20260510113604976629_54468f7c",
+  "experience_id": "exp_20260510112114716813_e7e24242",
+  "from_segment_id": "seg_20260510113604975584_882af7ec",
+  "to_segment_id": "seg_20260510112114717877_7fe425e6",
+  "relation_type": "continue_from",
+  "reason": "同一 experience 下恢复历史 segment，因此新 segment 继承旧 segment 的主题与意图。",
+  "weight": 0.95,
+  "created_at": "2026-05-10T11:36:04"
+}

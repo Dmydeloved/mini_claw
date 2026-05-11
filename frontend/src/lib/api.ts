@@ -57,6 +57,46 @@ export interface RawMessagesResponse {
   messages: RawMessage[];
 }
 
+export interface RuntimeConfig {
+  workspace_dir: string;
+  memory_dir: string;
+  sessions_dir: string;
+  memory_file: string;
+  topic_memory_store_file: string;
+  topic_memory_store_dir: string;
+  raw_messages_dir: string;
+}
+
+export interface TopicMemoryOverview {
+  version: number;
+  updated_at: string;
+  counts: {
+    experiences: number;
+    segments: number;
+    qas: number;
+    relations: number;
+  };
+  current_runtime_state?: {
+    conversation_id?: string;
+    current_experience_id?: string | null;
+    current_segment_id?: string | null;
+    latest_qa_id?: string | null;
+    recent_segment_ids?: string[];
+    updated_at?: string;
+  } | null;
+  latest_experience?: {
+    topic?: string;
+    goal?: string;
+    summary_short?: string;
+  } | null;
+  latest_segment?: {
+    topic?: string;
+    intent?: string;
+    status?: string;
+    summary?: string;
+  } | null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
 
@@ -251,6 +291,10 @@ export async function createSession(): Promise<CreateSessionResponse> {
   });
 }
 
+export async function getRuntimeConfig(): Promise<RuntimeConfig> {
+  return request<RuntimeConfig>('/runtime-config');
+}
+
 export async function getRawMessages(sessionId: string): Promise<RawMessagesResponse> {
   return request<RawMessagesResponse>(`/sessions/${encodeURIComponent(sessionId)}/raw-messages`);
 }
@@ -258,4 +302,9 @@ export async function getRawMessages(sessionId: string): Promise<RawMessagesResp
 export async function previewRawMessages(sessionId?: string): Promise<RawMessagesResponse> {
   const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
   return request<RawMessagesResponse>(`/raw-messages/preview${query}`);
+}
+
+export async function getTopicMemoryOverview(sessionId?: string): Promise<TopicMemoryOverview> {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+  return request<TopicMemoryOverview>(`/topic-memory/overview${query}`);
 }

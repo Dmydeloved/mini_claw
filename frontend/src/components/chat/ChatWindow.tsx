@@ -8,14 +8,18 @@ import {
   createSession,
   getFile,
   getRawMessages,
+  getRuntimeConfig,
   getSessions,
   getSkillContent,
   getSkills,
+  getTopicMemoryOverview,
   previewRawMessages,
   saveFile,
   streamMessage,
+  type RuntimeConfig,
   type SessionInfo,
   type Skill,
+  type TopicMemoryOverview,
 } from '@/lib/api';
 
 interface Message {
@@ -32,34 +36,54 @@ interface FilePanelItem {
 type PanelTab = 'chat' | 'memory' | 'skills';
 type ChatInspectorTab = 'session' | 'log' | 'raw';
 
-const MEMORY_FILE = 'workspace/memory/MEMORY.md';
-const MEMORY_FILES: FilePanelItem[] = [
-  { path: 'workspace/memory/MEMORY.md', label: 'MEMORY.md', description: 'Core memory' },
-  { path: 'workspace/SOUL.md', label: 'SOUL.md', description: 'System soul' },
-  { path: 'workspace/IDENTITY.md', label: 'IDENTITY.md', description: 'Identity rules' },
-  { path: 'workspace/USER.md', label: 'USER.md', description: 'User profile' },
-  { path: 'workspace/AGENTS.md', label: 'AGENTS.md', description: 'Agent protocol' },
-  {
-    path: 'workspace/SKILLS_SNAPSHOT.md',
-    label: 'SKILLS_SNAPSHOT.md',
-    description: 'Skills snapshot',
-  },
-];
+const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
+  workspace_dir: 'workspace',
+  memory_dir: 'memory',
+  sessions_dir: 'sessions',
+  memory_file: 'memory/MEMORY.md',
+  topic_memory_store_file: 'memory/topic_memory_store.json',
+  topic_memory_store_dir: 'memory/topic_memory_store',
+  raw_messages_dir: 'sessions/_raw_messages',
+};
 
-function formatTodayLogPath() {
+function buildMemoryFiles(config: RuntimeConfig): FilePanelItem[] {
+  return [
+    {
+      path: config.memory_file,
+      label: 'MEMORY.md',
+      description: 'Rendered topic memory snapshot',
+    },
+    {
+      path: config.topic_memory_store_file,
+      label: 'topic_memory_store.json',
+      description: 'Topic memory overview index',
+    },
+    { path: 'workspace/SOUL.md', label: 'SOUL.md', description: 'System soul' },
+    { path: 'workspace/IDENTITY.md', label: 'IDENTITY.md', description: 'Identity rules' },
+    { path: 'workspace/USER.md', label: 'USER.md', description: 'User profile' },
+    { path: 'workspace/AGENTS.md', label: 'AGENTS.md', description: 'Agent protocol' },
+    {
+      path: 'workspace/SKILLS_SNAPSHOT.md',
+      label: 'SKILLS_SNAPSHOT.md',
+      description: 'Skills snapshot',
+    },
+  ];
+}
+
+function formatTodayLogPath(memoryDir: string) {
   const now = new Date();
   const year = now.getFullYear();
   const month = `${now.getMonth() + 1}`.padStart(2, '0');
   const day = `${now.getDate()}`.padStart(2, '0');
-  return `workspace/memory/logs/${year}-${month}-${day}.md`;
+  return `${memoryDir}/logs/${year}-${month}-${day}.md`;
 }
 
-function getSessionFilePath(sessionId: string) {
-  return `workspace/sessions/${sessionId}.json`;
+function getSessionFilePath(sessionId: string, sessionsDir: string) {
+  return `${sessionsDir}/${sessionId}.json`;
 }
 
-function getRawMessagesFilePath(sessionId: string) {
-  return `workspace/sessions/_raw_messages/${sessionId}.json`;
+function getRawMessagesFilePath(sessionId: string, rawMessagesDir: string) {
+  return `${rawMessagesDir}/${sessionId}.json`;
 }
 
 function inferEditorLanguage(path: string) {
@@ -88,6 +112,7 @@ function parseSessionMessages(content: string): Message[] {
 }
 
 export default function ChatWindow() {
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(DEFAULT_RUNTIME_CONFIG);
   const [activeTab, setActiveTab] = useState<PanelTab>('chat');
   const [chatInspectorTab, setChatInspectorTab] = useState<ChatInspectorTab>('session');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -97,8 +122,9 @@ export default function ChatWindow() {
   const [chatInspectorLoading, setChatInspectorLoading] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [topicMemoryOverview, setTopicMemoryOverview] = useState<TopicMemoryOverview | null>(null);
   const [sessionId, setSessionId] = useState<string | undefined>();
-  const [editorPath, setEditorPath] = useState(MEMORY_FILE);
+  const [editorPath, setEditorPath] = useState(DEFAULT_RUNTIME_CONFIG.memory_file);
   const [editorContent, setEditorContent] = useState('');
   const [editorLabel, setEditorLabel] = useState('Memory Editor');
   const [editorDirty, setEditorDirty] = useState(false);
@@ -112,7 +138,11 @@ export default function ChatWindow() {
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const todayLogPath = useMemo(() => formatTodayLogPath(), []);
+  const memoryFiles = useMemo(() => buildMemoryFiles(runtimeConfig), [runtimeConfig]);
+  const todayLogPath = useMemo(
+    () => formatTodayLogPath(runtimeConfig.memory_dir),
+    [runtimeConfig.memory_dir]
+  );
 
   const editorTitle = useMemo(() => {
     if (activeTab === 'memory') return 'Memory Editor';
@@ -124,11 +154,11 @@ export default function ChatWindow() {
   const chatInspectorPath =
     chatInspectorTab === 'session'
       ? sessionId
-        ? getSessionFilePath(sessionId)
-        : 'workspace/sessions/session.json'
+        ? getSessionFilePath(sessionId, runtimeConfig.sessions_dir)
+        : `${runtimeConfig.sessions_dir}/session.json`
       : chatInspectorTab === 'raw'
         ? sessionId
-          ? getRawMessagesFilePath(sessionId)
+          ? getRawMessagesFilePath(sessionId, runtimeConfig.raw_messages_dir)
           : 'preview'
         : todayLogPath;
   const chatInspectorTitle =
@@ -160,8 +190,13 @@ export default function ChatWindow() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  async function loadChatArtifacts(targetSessionId?: string) {
-    const sessionPath = targetSessionId ? getSessionFilePath(targetSessionId) : '';
+  async function loadChatArtifacts(
+    targetSessionId?: string,
+    config: RuntimeConfig = runtimeConfig
+  ) {
+    const sessionPath = targetSessionId
+      ? getSessionFilePath(targetSessionId, config.sessions_dir)
+      : '';
 
     const sessionFilePromise = sessionPath
       ? getFile(sessionPath).catch(() => ({ path: sessionPath, content: '[]' }))
@@ -172,34 +207,46 @@ export default function ChatWindow() {
       : previewRawMessages()
     )
       .then((payload) => ({
-        path: targetSessionId ? getRawMessagesFilePath(targetSessionId) : 'preview',
+        path: targetSessionId
+          ? getRawMessagesFilePath(targetSessionId, config.raw_messages_dir)
+          : 'preview',
         content: JSON.stringify(payload, null, 2),
       }))
       .catch(() => ({
-        path: targetSessionId ? getRawMessagesFilePath(targetSessionId) : 'preview',
+        path: targetSessionId
+          ? getRawMessagesFilePath(targetSessionId, config.raw_messages_dir)
+          : 'preview',
         content: '{\n  "message_count": 0,\n  "messages": []\n}',
       }));
 
-    const logFilePromise = getFile(todayLogPath).catch(() => ({
-      path: todayLogPath,
+    const logPath = formatTodayLogPath(config.memory_dir);
+    const logFilePromise = getFile(logPath).catch(() => ({
+      path: logPath,
       content: '# Today Log\n\nNo log for today yet.',
     }));
+    const topicMemoryPromise = getTopicMemoryOverview(targetSessionId).catch(() => null);
 
-    const [sessionFile, rawMessagesFile, logFile] = await Promise.all([
+    const [sessionFile, rawMessagesFile, logFile, topicMemoryOverview] = await Promise.all([
       sessionFilePromise,
       rawMessagesFilePromise,
       logFilePromise,
+      topicMemoryPromise,
     ]);
-    return { sessionFile, rawMessagesFile, logFile };
+    return { sessionFile, rawMessagesFile, logFile, topicMemoryOverview };
   }
 
-  async function refreshChatInspector(targetSessionId?: string) {
+  async function refreshChatInspector(
+    targetSessionId?: string,
+    config: RuntimeConfig = runtimeConfig
+  ) {
     try {
       setChatInspectorLoading(true);
-      const { sessionFile, rawMessagesFile, logFile } = await loadChatArtifacts(targetSessionId);
+      const { sessionFile, rawMessagesFile, logFile, topicMemoryOverview } =
+        await loadChatArtifacts(targetSessionId, config);
       setSessionRecordContent(sessionFile.content);
       setRawMessagesContent(rawMessagesFile.content);
       setTodayLogContent(logFile.content);
+      setTopicMemoryOverview(topicMemoryOverview);
     } catch (error) {
       console.error(error);
       setStatusText('Failed to refresh chat context');
@@ -210,19 +257,23 @@ export default function ChatWindow() {
 
   async function bootstrap() {
     try {
-      const [skillsResult, sessionsResult, memoryResult] = await Promise.allSettled([
+      const [configResult, skillsResult, sessionsResult] = await Promise.allSettled([
+        getRuntimeConfig(),
         getSkills(),
         getSessions(),
-        getFile(MEMORY_FILE),
       ]);
+      const resolvedConfig =
+        configResult.status === 'fulfilled' ? configResult.value : DEFAULT_RUNTIME_CONFIG;
+      const memoryResult = await getFile(resolvedConfig.memory_file).catch(() => ({
+        path: resolvedConfig.memory_file,
+        content: '',
+      }));
 
       const skillsData = skillsResult.status === 'fulfilled' ? skillsResult.value : [];
       const sessionsData = sessionsResult.status === 'fulfilled' ? sessionsResult.value : [];
-      const memoryFile =
-        memoryResult.status === 'fulfilled'
-          ? memoryResult.value
-          : { path: MEMORY_FILE, content: '' };
+      const memoryFile = memoryResult;
 
+      setRuntimeConfig(resolvedConfig);
       setSkills(skillsData);
       setSessions(sessionsData);
       setEditorPath(memoryFile.path);
@@ -232,9 +283,9 @@ export default function ChatWindow() {
       setStatusText('Workspace loaded');
 
       if (sessionsData.length > 0) {
-        await openSession(sessionsData[0].session_id, true);
+        await openSession(sessionsData[0].session_id, true, resolvedConfig);
       } else {
-        await refreshChatInspector();
+        await refreshChatInspector(undefined, resolvedConfig);
       }
     } catch (error) {
       console.error(error);
@@ -245,7 +296,7 @@ export default function ChatWindow() {
   async function openFile(path: string) {
     try {
       const file = await getFile(path);
-      const selectedFile = MEMORY_FILES.find((item) => item.path === path);
+      const selectedFile = memoryFiles.find((item) => item.path === path);
       setEditorPath(file.path);
       setEditorLabel(selectedFile?.label ?? 'Memory Editor');
       setEditorContent(file.content);
@@ -275,15 +326,21 @@ export default function ChatWindow() {
     }
   }
 
-  async function openSession(nextSessionId: string, silent = false) {
+  async function openSession(
+    nextSessionId: string,
+    silent = false,
+    config: RuntimeConfig = runtimeConfig
+  ) {
     try {
-      const { sessionFile, rawMessagesFile, logFile } = await loadChatArtifacts(nextSessionId);
+      const { sessionFile, rawMessagesFile, logFile, topicMemoryOverview } =
+        await loadChatArtifacts(nextSessionId, config);
 
       setSessionId(nextSessionId);
       setMessages(parseSessionMessages(sessionFile.content));
       setSessionRecordContent(sessionFile.content);
       setRawMessagesContent(rawMessagesFile.content);
       setTodayLogContent(logFile.content);
+      setTopicMemoryOverview(topicMemoryOverview);
       setActiveTab('chat');
       setChatInspectorTab('session');
       setRightCollapsed(false);
@@ -317,6 +374,7 @@ export default function ChatWindow() {
       setSessionRecordContent(artifacts.sessionFile.content);
       setRawMessagesContent(artifacts.rawMessagesFile.content);
       setTodayLogContent(artifacts.logFile.content);
+      setTopicMemoryOverview(artifacts.topicMemoryOverview);
       setMessages([]);
       setStatusText(`New session ${nextSessionId}`);
     } catch (error) {
@@ -394,6 +452,7 @@ export default function ChatWindow() {
       setSessionRecordContent(artifacts.sessionFile.content);
       setRawMessagesContent(artifacts.rawMessagesFile.content);
       setTodayLogContent(artifacts.logFile.content);
+      setTopicMemoryOverview(artifacts.topicMemoryOverview);
       setMessages(parseSessionMessages(artifacts.sessionFile.content));
       setStatusText(`Updated session ${response.session_id}`);
     } catch (error) {
@@ -545,9 +604,23 @@ export default function ChatWindow() {
 
                     {activeTab === 'memory' && (
                       <section>
+                        {topicMemoryOverview && (
+                          <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/70 px-3 py-3">
+                            <p className="text-sm font-medium text-slate-900">Topic Memory</p>
+                            <p className="mt-2 text-xs text-slate-600">
+                              Experience {topicMemoryOverview.counts.experiences} · Segment{' '}
+                              {topicMemoryOverview.counts.segments} · QA {topicMemoryOverview.counts.qas} ·
+                              Relation {topicMemoryOverview.counts.relations}
+                            </p>
+                            <p className="mt-2 text-xs text-slate-500">
+                              Current Segment:{' '}
+                              {topicMemoryOverview.current_runtime_state?.current_segment_id ?? 'none'}
+                            </p>
+                          </div>
+                        )}
                         <p className="panel-label">Memory Files</p>
                         <div className="mt-3 space-y-2">
-                          {MEMORY_FILES.map((item) => (
+                          {memoryFiles.map((item) => (
                             <button
                               key={item.path}
                               onClick={() => void openFile(item.path)}

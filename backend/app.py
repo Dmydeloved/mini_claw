@@ -171,6 +171,16 @@ class RawMessagesResponse(BaseModel):
     prompt_preview: Optional[PromptPreview] = None
 
 
+class RuntimeConfig(BaseModel):
+    workspace_dir: str
+    memory_dir: str
+    sessions_dir: str
+    memory_file: str
+    topic_memory_store_file: str
+    topic_memory_store_dir: str
+    raw_messages_dir: str
+
+
 def _sse_event(event: str, payload: Dict[str, Any]) -> str:
     """Serialize one server-sent event."""
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -190,6 +200,15 @@ def _resolve_project_file(relative_path: str) -> Path:
         raise HTTPException(status_code=403, detail="Path is outside backend root") from exc
 
     return target
+
+
+def _to_backend_relative(path: str) -> str:
+    target = Path(path).resolve()
+    try:
+        relative = target.relative_to(BACKEND_ROOT)
+    except ValueError:
+        return str(target)
+    return str(relative).replace(os.sep, "/")
 
 
 @app.get("/")
@@ -254,6 +273,23 @@ async def chat(request: ChatRequest):
     try:
         result = agent.chat(message=request.message, session_id=request.session_id)
         return ChatResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/runtime-config", response_model=RuntimeConfig)
+async def get_runtime_config():
+    """Expose resolved backend-relative runtime paths for the frontend."""
+    try:
+        return RuntimeConfig(
+            workspace_dir=_to_backend_relative(agent.workspace_dir),
+            memory_dir=_to_backend_relative(agent.memory_dir),
+            sessions_dir=_to_backend_relative(agent.sessions_dir),
+            memory_file=_to_backend_relative(agent.memory_manager.memory_file),
+            topic_memory_store_file=_to_backend_relative(agent.topic_memory_manager.index_file),
+            topic_memory_store_dir=_to_backend_relative(agent.topic_memory_manager.store_dir),
+            raw_messages_dir=_to_backend_relative(agent.memory_manager.raw_messages_dir),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -358,6 +394,15 @@ async def preview_raw_messages(session_id: Optional[str] = None):
     try:
         payload = agent.preview_raw_messages(session_id=session_id)
         return RawMessagesResponse(**payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/topic-memory/overview")
+async def get_topic_memory_overview(session_id: Optional[str] = None):
+    """Return a lightweight overview of the current topic memory store."""
+    try:
+        return agent.get_topic_memory_overview(session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

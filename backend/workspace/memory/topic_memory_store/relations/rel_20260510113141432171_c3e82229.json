@@ -1,0 +1,10 @@
+{
+  "relation_id": "rel_20260510113141432171_c3e82229",
+  "experience_id": "exp_20260510112114716813_e7e24242",
+  "from_segment_id": "seg_20260510113138927567_3f36273a",
+  "to_segment_id": "seg_20260510112114717877_7fe425e6",
+  "relation_type": "refines",
+  "reason": "当前 segment 以实现的角度详细展开了之前提出的脚本设计方案，提供模块拆分和主函数伪代码，是对设计目标的细化与实施。",
+  "weight": 0.9,
+  "created_at": "2026-05-10T11:31:41"
+}

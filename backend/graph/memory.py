@@ -25,7 +25,7 @@ class Message:
 class MemoryManager:
     """
     Manages three-layer memory system:
-    1. MEMORY.md - Core persistent facts
+    1. MEMORY.md - Rendered snapshot of topic memory
     2. Daily logs - Chronological conversation records
     3. Session JSON - Active session history
     """
@@ -53,22 +53,25 @@ class MemoryManager:
 
     def _initialize_memory(self):
         """Create initial MEMORY.md file"""
-        initial_content = """# Core Memory
+        initial_content = """# Topic Memory Snapshot
 
-This file contains persistent facts about the user and important information that should be remembered across sessions.
+此文件由系统根据三层主题记忆自动生成，请勿手工编辑。
 
-## User Information
+## Runtime State
 
-- Name: (Not yet provided)
-- Preferences: (None recorded)
+- conversation_id: none
+- current_experience_id: none
+- current_segment_id: none
+- latest_qa_id: none
+- recent_segment_ids: none
+- updated_at: none
 
-## Important Facts
+## Counts
 
-(No facts recorded yet)
-
-## Notes
-
-This memory is automatically updated by the Agent after conversations.
+- experiences: 0
+- segments: 0
+- qas: 0
+- relations: 0
 """
         with open(self.memory_file, "w", encoding="utf-8") as f:
             f.write(initial_content)
@@ -105,10 +108,11 @@ Prompt 中只会注入技能摘要，也就是每个 skill 的名称和描述，
 
 ## 记忆协议
 
-1. 长期事实记录在 `workspace/memory/MEMORY.md`。
-2. 会话历史保存在 `workspace/sessions/*.json`。
-3. 如需引用项目规则或用户画像，请优先参考工作区文件。
-4. 如果你不确定某个事实是否准确，应明确说明不确定，而不是把猜测写进记忆。
+1. 主题长期记忆采用 `Experience -> Segment -> QA` 三层结构，并由系统自动写入 `memory/topic_memory_store/`。
+2. `memory/MEMORY.md` 是主题记忆快照渲染文件，不是手工维护的事实库。
+3. 会话历史保存在 `sessions/*.json`。
+4. 如需引用项目规则或用户画像，请优先参考工作区文件。
+5. 如果你不确定某个事实是否准确，应明确说明不确定，而不是把猜测写进记忆。
 """,
         }
 

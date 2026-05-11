@@ -130,6 +130,7 @@ class MiniOpenClawAgent:
         self.topic_memory_manager = TopicMemoryManager(
             memory_dir=self.memory_dir,
             sessions_dir=self.sessions_dir,
+            extractor_llm=self.llm,
         )
         self.experience_miner = ExperienceMiner(memory_dir=self.memory_dir)
         self.context_selector = TopicContextSelector()
@@ -1133,11 +1134,12 @@ class MiniOpenClawAgent:
             history=history,
             prepare_state=True,
         )
+        print(f"topic_prompt_context==={topic_prompt_context}")
         session_context = self.context_selector.build_session_context(
             history=history,
             analysis=topic_prompt_context.analysis,
         )
-
+        print(f"session_context==={session_context}")
         for iteration in range(self.max_tool_iterations):
             runtime_context = self._build_runtime_context(
                 session_id=session_id,
@@ -1155,8 +1157,11 @@ class MiniOpenClawAgent:
                 user_message=user_message,
             )
             system_prompt = self._build_system_prompt(prompt_layers=prompt_layers)
+            print(f"system_prompt==={system_prompt},number:{iteration}")
             combined_history = [*session_context.prompt_history, *turn_messages]
+            print(f"combined_history==={combined_history},number:{iteration}")
             prompt_messages = self._build_prompt_messages(system_prompt, combined_history)
+            print(f"prompt_messages==={prompt_messages},number:{iteration}")
             raw_messages = self._serialize_prompt_messages(prompt_messages)
             raw_prompt_payload = self._build_raw_prompt_payload(
                 session_id=session_id,
@@ -1336,6 +1341,10 @@ class MiniOpenClawAgent:
     def get_memory(self) -> str:
         """Get memory content"""
         return self.memory_manager.get_memory_content()
+
+    def get_topic_memory_overview(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get the current topic-memory overview payload."""
+        return self.topic_memory_manager.get_store_overview(conversation_id=session_id)
 
     def update_memory(self, content: str):
         """Update memory content"""
